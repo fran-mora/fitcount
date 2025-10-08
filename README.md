@@ -1,7 +1,7 @@
 # Fit Tokens (GitHub Pages + Supabase)
 
 A minimal, mobile-friendly web app that tracks daily fitness tokens:
-- Day 1 adds 10 tokens, Day 2 adds 11, … capping at 100 per day.
+- Day 1 adds 50 tokens, Day 2 adds 51, … capping at 100 per day.
 - Tokens are credited when the page is opened (no cron). If multiple days passed, it credits the remaining days.
 - You click a single button to spend one token per rep.
 - Single-user, no auth, hosted on GitHub Pages.
@@ -110,7 +110,7 @@ You can also test locally by simply opening index.html in your browser (double-c
   - Computes days between `last_credited_date` and `today`.
   - For each missing day i:
     - dayIndex = days since `start_date` + 1
-    - add amount = min(10 + (dayIndex - 1), 100)
+    - add amount = min(50 + (dayIndex - 1), 100)
   - Sums them all, increments `balance`, sets `last_credited_date = today`.
 - Button “I did one rep (-1)” decrements `balance` by one, if > 0.
 

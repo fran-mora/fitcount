@@ -1,6 +1,6 @@
 // Fit Tokens App (plain JS + jQuery + Supabase)
 // Single-user, no auth. Hosted on GitHub Pages. Data stored in Supabase.
-// Daily schedule: Day 1 adds 10, Day 2 adds 11, ... up to max 100/day.
+/* Daily schedule: Day 1 adds 50, Day 2 adds 51, ... up to max 100/day. */
 // On page open, credit any days since last_credited_date up to today.
 
 (() => {
@@ -62,9 +62,9 @@
   }
 
   // ====== Token schedule ======
-  // Day 1 => 10, Day 2 => 11, ... Day n => min(10 + (n-1), 100)
+  // Day 1 => 50, Day 2 => 51, ... Day n => min(50 + (n-1), 100)
   function perDayAdd(dayIndex) {
-    return Math.min(10 + (dayIndex - 1), 100);
+    return Math.min(50 + (dayIndex - 1), 100);
   }
 
   function dayIndexFromStart(startYmd, ymd) {
