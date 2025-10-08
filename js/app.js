@@ -1,7 +1,9 @@
 // Fit Tokens App (plain JS + jQuery + Supabase)
 // Single-user, no auth. Hosted on GitHub Pages. Data stored in Supabase.
-/* Daily schedule: Day 1 adds 50, Day 2 adds 51, ... up to max 100/day. */
-// On page open, credit any days since last_credited_date up to today.
+// New rules:
+// - Each day automatically removes 100 tokens (daily drain).
+// - Each rep adds +1 token via the button.
+// - Balance can go negative.
 
 (() => {
   "use strict";
@@ -17,16 +19,18 @@
   // ====== DOM elements ======
   const $todayText = $("#todayText");
   const $balanceText = $("#balanceText");
-  const $minusOneBtn = $("#minusOneBtn");
-  const $todaysAddText = $("#todaysAddText");
-  const $addedSinceText = $("#addedSinceText");
-  const $lastCreditedText = $("#lastCreditedText");
+  const $minusOneBtn = $("#minusOneBtn"); // Reused ID; now adds +1 per rep
+  const $todaysAddText = $("#todaysAddText"); // Shows today's drain amount (100)
+  const $addedSinceText = $("#addedSinceText"); // Shows total drained since last visit
+  const $lastCreditedText = $("#lastCreditedText"); // Last processed up to
   const $startDateText = $("#startDateText");
   const $alertContainer = $("#alertContainer");
   const $alert = $("#alert");
   const $loading = $("#loading");
   const $repsChartCanvas = $("#repsChart");
   let repsChart = null;
+
+  const DAILY_DRAIN = 100;
 
   // ====== Local date helpers (avoid timezone bugs) ======
   function toYMDLocal(date) {
@@ -61,17 +65,6 @@
     return diff;
   }
 
-  // ====== Token schedule ======
-  // Day 1 => 50, Day 2 => 51, ... Day n => min(50 + (n-1), 100)
-  function perDayAdd(dayIndex) {
-    return Math.min(50 + (dayIndex - 1), 100);
-  }
-
-  function dayIndexFromStart(startYmd, ymd) {
-    // If ymd == start => index 1
-    return daysBetweenYMD(startYmd, ymd) + 1;
-  }
-
   // ====== UI helpers ======
   function setLoading(visible) {
     if (visible) $loading.show();
@@ -90,22 +83,21 @@
 
   function refreshUI(state, extras = {}) {
     // state: { id, start_date, last_credited_date, balance }
-    // extras: { addedNow }
+    // extras: { drainedNow }
     const now = new Date();
     $todayText.text(now.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }));
 
-    const today = todayYMD();
-    const todaysIndex = dayIndexFromStart(state.start_date, today);
-    const todaysAdd = perDayAdd(todaysIndex);
+    // Show today's drain amount (100)
+    $todaysAddText.text(DAILY_DRAIN.toString());
+    // Show how many tokens were drained since last visit (positive number)
+    $addedSinceText.text((extras.drainedNow || 0).toString());
 
-    $todaysAddText.text(todaysAdd.toString());
-    $addedSinceText.text((extras.addedNow || 0).toString());
     $lastCreditedText.text(state.last_credited_date);
     $startDateText.text(state.start_date);
     $balanceText.text(state.balance.toString());
 
-    // Enable / disable button
-    $minusOneBtn.prop("disabled", state.balance <= 0);
+    // Always allow adding +1 per rep, even if negative
+    $minusOneBtn.prop("disabled", false);
   }
 
   // ====== Reps history (Chart) ======
@@ -214,10 +206,11 @@
 
     if (!data) {
       const start = todayYMD();
-      const lastCredited = addDaysYMD(start, -1); // so that today's credit will occur on first run
+      // so that today's drain will occur on first run
+      const lastProcessed = addDaysYMD(start, -1);
       const { data: inserted, error: insErr } = await supabase
         .from("fit_state")
-        .insert([{ id: "singleton", start_date: start, last_credited_date: lastCredited, balance: 0 }])
+        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0 }])
         .select()
         .single();
 
@@ -228,22 +221,35 @@
     return data;
   }
 
-  async function creditIfNeeded(state) {
+  async function processDrainIfNeeded(state) {
     const today = todayYMD();
-    const daysToCredit = daysBetweenYMD(state.last_credited_date, today);
+    const daysToProcess = daysBetweenYMD(state.last_credited_date, today);
 
-    if (daysToCredit <= 0) {
-      return { state, addedNow: 0 };
+    if (daysToProcess <= 0) {
+      return { state, drainedNow: 0 };
     }
 
-    let sum = 0;
-    for (let i = 1; i <= daysToCredit; i++) {
+    // Build drain history rows
+    const drainRows = [];
+    for (let i = 1; i <= daysToProcess; i++) {
       const day = addDaysYMD(state.last_credited_date, i);
-      const index = dayIndexFromStart(state.start_date, day);
-      sum += perDayAdd(index);
+      drainRows.push({ drain_date: day, amount: DAILY_DRAIN });
     }
 
-    const newBalance = state.balance + sum;
+    // Upsert drain history (not fatal if it fails)
+    try {
+      const { error: upsertErr } = await supabase
+        .from("fit_daily_drain")
+        .upsert(drainRows);
+      if (upsertErr) {
+        console.warn("Failed to upsert drain history:", upsertErr);
+      }
+    } catch (e) {
+      console.warn("Error recording drain history:", e);
+    }
+
+    const totalDrain = daysToProcess * DAILY_DRAIN;
+    const newBalance = state.balance - totalDrain;
 
     const { data: updated, error: updErr } = await supabase
       .from("fit_state")
@@ -254,16 +260,11 @@
 
     if (updErr) throw updErr;
 
-    return { state: updated, addedNow: sum };
+    return { state: updated, drainedNow: totalDrain };
   }
 
-  async function decrementOne(state) {
-    if (state.balance <= 0) {
-      showAlert("No tokens to spend. Do your reps to keep up!", "info");
-      return state;
-    }
-
-    const newBal = state.balance - 1;
+  async function incrementOne(state) {
+    const newBal = state.balance + 1;
 
     const { data: updated, error } = await supabase
       .from("fit_state")
@@ -295,22 +296,22 @@
 
     try {
       let state = await ensureStateRow();
-      const { state: creditedState, addedNow } = await creditIfNeeded(state);
-      state = creditedState;
+      const { state: processedState, drainedNow } = await processDrainIfNeeded(state);
+      state = processedState;
 
-      refreshUI(state, { addedNow });
+      refreshUI(state, { drainedNow });
       await refreshRepsChart();
 
-      // Wire up button
+      // Wire up button (+1 per rep)
       $minusOneBtn.off("click").on("click", async () => {
         $minusOneBtn.prop("disabled", true);
         try {
-          const updated = await decrementOne(state);
+          const updated = await incrementOne(state);
           state = updated;
-          refreshUI(state, { addedNow: 0 });
+          refreshUI(state, { drainedNow: 0 });
           await refreshRepsChart();
         } finally {
-          $minusOneBtn.prop("disabled", state.balance <= 0);
+          $minusOneBtn.prop("disabled", false);
         }
       });
     } catch (err) {
