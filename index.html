@@ -7,7 +7,7 @@
     content="width=device-width, initial-scale=1, viewport-fit=cover"
   />
   <meta name="theme-color" content="#0d6efd" />
-  <title>Fit Tokens</title>
+  <title>FitCount</title>
 
   <!-- Bootstrap CSS -->
   <link
@@ -23,7 +23,7 @@
 <body class="bg-light">
   <div class="container py-4">
     <header class="mb-4 text-center">
-      <h1 class="h3 fw-bold">Fit Tokens</h1>
+      <h1 class="h3 fw-bold">FitCount</h1>
       <div class="text-muted small">
         Today: <span id="todayText">—</span>
       </div>
@@ -53,8 +53,11 @@
       <div class="col-6">
         <div class="card shadow-sm h-100">
           <div class="card-body">
-            <div class="text-muted small">Today's Drain</div>
-            <div id="todaysAddText" class="h3 mb-0">—</div>
+            <div class="text-muted small mb-2">Daily Drain</div>
+            <div class="input-group">
+              <input type="number" id="dailyDrainInput" class="form-control" min="0" value="100" />
+              <button id="updateDrainBtn" class="btn btn-outline-secondary" type="button">Update</button>
+            </div>
           </div>
         </div>
       </div>
@@ -111,7 +114,7 @@
     </div>
 
     <footer class="text-center mt-4 text-muted small">
-      Daily drain: 100 tokens are removed automatically each day. Add tokens by doing reps (+1 each).
+      Daily drain: tokens are removed automatically each day. Add tokens by doing reps (+1 each).
     </footer>
   </div>
 

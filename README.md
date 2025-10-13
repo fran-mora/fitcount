@@ -1,7 +1,8 @@
-# Fit Tokens (GitHub Pages + Supabase)
+# FitCount (GitHub Pages + Supabase)
 
 A minimal, mobile-friendly web app that tracks daily fitness tokens with a simple rule-set:
-- Each day automatically removes 100 tokens (processed when you open the page; no cron).
+- Each day automatically removes tokens based on your configurable daily drain (processed when you open the page; no cron).
+- You can edit the daily drain amount directly in the app.
 - You click a single button to add one token per rep (+1 each click).
 - Balance can go negative.
 - Single-user, no auth, hosted on GitHub Pages.
@@ -18,6 +19,7 @@ Files:
   - 20251004084106_add_fit_reps.sql
   - 20251008193000_add_fit_daily_drain.sql
   - 20251008113100_reset_fit_data.sql (danger: destructive reset script)
+  - 20251013084700_add_daily_drain_column.sql (adds editable daily_drain field)
 - README.md — setup and notes (this file)
 
 
@@ -33,6 +35,7 @@ create table if not exists public.fit_state (
   start_date date not null,
   last_credited_date date not null,
   balance integer not null default 0,
+  daily_drain integer not null default 100,
   updated_at timestamptz not null default now()
 );
 
@@ -96,7 +99,7 @@ using (true)
 with check (true);
 ```
 
-Daily drain history (audit of the automatic -100/day deductions):
+Daily drain history (audit of the automatic daily deductions based on your configured drain amount):
 ```sql
 create table if not exists public.fit_daily_drain (
   drain_date date primary key,
@@ -162,12 +165,17 @@ You can also test locally by simply opening index.html in your browser (double-c
 - On first visit:
   - Creates row: id = 'singleton'
   - Sets `start_date = today`
-  - Sets `last_credited_date = yesterday` so that the first visit will process today’s drain
+  - Sets `last_credited_date = yesterday` so that the first visit will process today's drain
+  - Sets `daily_drain = 100` (default value, editable in the UI)
 - On each subsequent visit:
   - Computes days between `last_credited_date` and `today`
-  - For each missing day, applies a drain of 100 tokens
+  - For each missing day, applies a drain based on the stored `daily_drain` value
   - Sums them all, decrements `balance` accordingly, sets `last_credited_date = today`
   - Also records each day's drain into `fit_daily_drain` (best-effort; non-fatal if insert fails)
+- Daily Drain can be edited:
+  - Change the value in the "Daily Drain" input field
+  - Click "Update" to save the new drain rate
+  - The new rate will apply to future daily drains
 - Button “I did one rep (+1)”:
   - Increments `balance` by one (always allowed; balance can be negative)
   - Records one rep for today in `fit_reps` (insert or update today's row)

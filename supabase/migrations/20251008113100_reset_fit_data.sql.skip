@@ -5,9 +5,9 @@
 begin;
 
 -- Clear daily reps history (chart data)
-truncate table if exists public.fit_reps;
+truncate table public.fit_reps;
 -- Clear daily drain history
-truncate table if exists public.fit_daily_drain;
+truncate table public.fit_daily_drain;
 
 -- Clear singleton state row so app re-initializes on next load
 delete from public.fit_state;

@@ -1,7 +1,7 @@
-// Fit Tokens App (plain JS + jQuery + Supabase)
+// FitCount App (plain JS + jQuery + Supabase)
 // Single-user, no auth. Hosted on GitHub Pages. Data stored in Supabase.
 // New rules:
-// - Each day automatically removes 100 tokens (daily drain).
+// - Each day automatically removes tokens based on daily_drain setting (editable).
 // - Each rep adds +1 token via the button.
 // - Balance can go negative.
 
@@ -20,7 +20,8 @@
   const $todayText = $("#todayText");
   const $balanceText = $("#balanceText");
   const $minusOneBtn = $("#minusOneBtn"); // Reused ID; now adds +1 per rep
-  const $todaysAddText = $("#todaysAddText"); // Shows today's drain amount (100)
+  const $dailyDrainInput = $("#dailyDrainInput"); // Input for daily drain amount
+  const $updateDrainBtn = $("#updateDrainBtn"); // Button to update daily drain
   const $addedSinceText = $("#addedSinceText"); // Shows total drained since last visit
   const $lastCreditedText = $("#lastCreditedText"); // Last processed up to
   const $startDateText = $("#startDateText");
@@ -29,8 +30,6 @@
   const $loading = $("#loading");
   const $repsChartCanvas = $("#repsChart");
   let repsChart = null;
-
-  const DAILY_DRAIN = 100;
 
   // ====== Local date helpers (avoid timezone bugs) ======
   function toYMDLocal(date) {
@@ -82,13 +81,13 @@
   }
 
   function refreshUI(state, extras = {}) {
-    // state: { id, start_date, last_credited_date, balance }
+    // state: { id, start_date, last_credited_date, balance, daily_drain }
     // extras: { drainedNow }
     const now = new Date();
     $todayText.text(now.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }));
 
-    // Show today's drain amount (100)
-    $todaysAddText.text(DAILY_DRAIN.toString());
+    // Show the current daily drain value in the input
+    $dailyDrainInput.val(state.daily_drain || 100);
     // Show how many tokens were drained since last visit (positive number)
     $addedSinceText.text((extras.drainedNow || 0).toString());
 
@@ -210,7 +209,7 @@
       const lastProcessed = addDaysYMD(start, -1);
       const { data: inserted, error: insErr } = await supabase
         .from("fit_state")
-        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0 }])
+        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0, daily_drain: 100 }])
         .select()
         .single();
 
@@ -229,11 +228,13 @@
       return { state, drainedNow: 0 };
     }
 
+    const dailyDrain = state.daily_drain || 100;
+
     // Build drain history rows
     const drainRows = [];
     for (let i = 1; i <= daysToProcess; i++) {
       const day = addDaysYMD(state.last_credited_date, i);
-      drainRows.push({ drain_date: day, amount: DAILY_DRAIN });
+      drainRows.push({ drain_date: day, amount: dailyDrain });
     }
 
     // Upsert drain history (not fatal if it fails)
@@ -248,7 +249,7 @@
       console.warn("Error recording drain history:", e);
     }
 
-    const totalDrain = daysToProcess * DAILY_DRAIN;
+    const totalDrain = daysToProcess * dailyDrain;
     const newBalance = state.balance - totalDrain;
 
     const { data: updated, error: updErr } = await supabase
@@ -289,6 +290,24 @@
     return updated;
   }
 
+  async function updateDailyDrain(state, newDrain) {
+    const { data: updated, error } = await supabase
+      .from("fit_state")
+      .update({ daily_drain: newDrain })
+      .eq("id", "singleton")
+      .select()
+      .single();
+
+    if (error) {
+      showAlert(`Error updating daily drain: ${error.message}`, "danger");
+      return state;
+    }
+
+    showAlert("Daily drain updated successfully!", "success");
+    setTimeout(hideAlert, 3000);
+    return updated;
+  }
+
   // ====== App init ======
   async function init() {
     setLoading(true);
@@ -312,6 +331,23 @@
           await refreshRepsChart();
         } finally {
           $minusOneBtn.prop("disabled", false);
+        }
+      });
+
+      // Wire up daily drain update button
+      $updateDrainBtn.off("click").on("click", async () => {
+        $updateDrainBtn.prop("disabled", true);
+        try {
+          const newDrain = parseInt($dailyDrainInput.val(), 10);
+          if (isNaN(newDrain) || newDrain < 0) {
+            showAlert("Please enter a valid number (0 or greater)", "warning");
+            return;
+          }
+          const updated = await updateDailyDrain(state, newDrain);
+          state = updated;
+          refreshUI(state, { drainedNow: 0 });
+        } finally {
+          $updateDrainBtn.prop("disabled", false);
         }
       });
     } catch (err) {
