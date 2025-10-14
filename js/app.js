@@ -19,7 +19,9 @@
   // ====== DOM elements ======
   const $todayText = $("#todayText");
   const $balanceText = $("#balanceText");
-  const $minusOneBtn = $("#minusOneBtn"); // Reused ID; now adds +1 per rep
+  const $rep1Btn = $("#rep1Btn");
+  const $rep5Btn = $("#rep5Btn");
+  const $rep10Btn = $("#rep10Btn");
   const $dailyDrainInput = $("#dailyDrainInput"); // Input for daily drain amount
   const $updateDrainBtn = $("#updateDrainBtn"); // Button to update daily drain
   const $addedSinceText = $("#addedSinceText"); // Shows total drained since last visit
@@ -95,8 +97,10 @@
     $startDateText.text(state.start_date);
     $balanceText.text(state.balance.toString());
 
-    // Always allow adding +1 per rep, even if negative
-    $minusOneBtn.prop("disabled", false);
+    // Enable rep buttons (balance can be negative)
+    $rep1Btn.prop("disabled", false);
+    $rep5Btn.prop("disabled", false);
+    $rep10Btn.prop("disabled", false);
   }
 
   // ====== Reps history (Chart) ======
@@ -167,8 +171,9 @@
     }
   }
 
-  async function incrementTodaysReps() {
+  async function incrementTodaysReps(amount = 1) {
     const today = todayYMD();
+    const inc = Number(amount) || 1;
     // Read existing count
     const { data: existing, error: selErr } = await supabase
       .from("fit_reps")
@@ -180,13 +185,13 @@
     if (existing) {
       const { error: updErr } = await supabase
         .from("fit_reps")
-        .update({ reps: existing.reps + 1 })
+        .update({ reps: existing.reps + inc })
         .eq("rep_date", today);
       if (updErr) throw updErr;
     } else {
       const { error: insErr } = await supabase
         .from("fit_reps")
-        .insert({ rep_date: today, reps: 1 });
+        .insert({ rep_date: today, reps: inc });
       if (insErr) throw insErr;
     }
   }
@@ -264,8 +269,9 @@
     return { state: updated, drainedNow: totalDrain };
   }
 
-  async function incrementOne(state) {
-    const newBal = state.balance + 1;
+  async function incrementBy(state, amount) {
+    const inc = Number(amount) || 1;
+    const newBal = state.balance + inc;
 
     const { data: updated, error } = await supabase
       .from("fit_state")
@@ -279,15 +285,20 @@
       return state;
     }
 
-    // Record one rep for today
+    // Record reps for today
     try {
-      await incrementTodaysReps();
+      await incrementTodaysReps(inc);
     } catch (e) {
-      console.warn("Failed to record rep:", e);
-      showAlert("Saved balance, but failed to record today's rep history.", "warning");
+      console.warn("Failed to record reps:", e);
+      showAlert("Saved balance, but failed to record today's reps history.", "warning");
     }
 
     return updated;
+  }
+
+  // Backward compatibility helper (unused now, but kept just in case)
+  async function incrementOne(state) {
+    return incrementBy(state, 1);
   }
 
   async function updateDailyDrain(state, newDrain) {
@@ -321,18 +332,28 @@
       refreshUI(state, { drainedNow });
       await refreshRepsChart();
 
-      // Wire up button (+1 per rep)
-      $minusOneBtn.off("click").on("click", async () => {
-        $minusOneBtn.prop("disabled", true);
+      // Wire up rep buttons
+      function setRepButtonsDisabled(disabled) {
+        $rep1Btn.prop("disabled", disabled);
+        $rep5Btn.prop("disabled", disabled);
+        $rep10Btn.prop("disabled", disabled);
+      }
+
+      const handleAdd = (amt) => async () => {
+        setRepButtonsDisabled(true);
         try {
-          const updated = await incrementOne(state);
+          const updated = await incrementBy(state, amt);
           state = updated;
           refreshUI(state, { drainedNow: 0 });
           await refreshRepsChart();
         } finally {
-          $minusOneBtn.prop("disabled", false);
+          setRepButtonsDisabled(false);
         }
-      });
+      };
+
+      $rep1Btn.off("click").on("click", handleAdd(1));
+      $rep5Btn.off("click").on("click", handleAdd(5));
+      $rep10Btn.off("click").on("click", handleAdd(10));
 
       // Wire up daily drain update button
       $updateDrainBtn.off("click").on("click", async () => {
