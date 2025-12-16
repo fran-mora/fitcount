@@ -33,6 +33,49 @@
   const $repsChartCanvas = $("#repsChart");
   let repsChart = null;
 
+  // ====== Theme helpers (sync Bootstrap color mode with OS preference) ======
+  function isDarkModeActive() {
+    return document.documentElement.getAttribute("data-bs-theme") === "dark";
+  }
+
+  function applyThemeFromSystem() {
+    try {
+      const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+      const isDark = mq && mq.matches;
+      document.documentElement.setAttribute("data-bs-theme", isDark ? "dark" : "light");
+      return isDark;
+    } catch (_) {
+      return isDarkModeActive();
+    }
+  }
+
+  function getChartColors() {
+    // Keep chart readable in both themes using Bootstrap CSS variables.
+    const styles = getComputedStyle(document.documentElement);
+    const textColor = styles.getPropertyValue("--bs-body-color").trim() || "#212529";
+
+    // A slightly softer grid line looks better in both modes.
+    const gridColor = isDarkModeActive() ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.10)";
+
+    return { textColor, gridColor };
+  }
+
+  function applyChartTheme() {
+    if (!repsChart) return;
+    const { textColor, gridColor } = getChartColors();
+
+    // Chart.js v4: update scale tick/grid colors and redraw.
+    repsChart.options.scales.x.ticks.color = textColor;
+    repsChart.options.scales.y.ticks.color = textColor;
+    repsChart.options.scales.y.grid.color = gridColor;
+    repsChart.update();
+  }
+
+  function onThemeChange() {
+    applyThemeFromSystem();
+    applyChartTheme();
+  }
+
   // ====== Local date helpers (avoid timezone bugs) ======
   function toYMDLocal(date) {
     const y = date.getFullYear();
@@ -120,6 +163,8 @@
     const labels = rows.map((r) => r.rep_date);
     const values = rows.map((r) => r.reps);
 
+    const { textColor, gridColor } = getChartColors();
+
     if (repsChart) {
       repsChart.destroy();
     }
@@ -133,7 +178,7 @@
             label: "Reps",
             data: values,
             backgroundColor: "rgba(13,110,253,0.6)",
-            borderRadius: 2
+            borderRadius: 2,
           },
         ],
       },
@@ -142,12 +187,13 @@
         maintainAspectRatio: false,
         scales: {
           x: {
-            ticks: { autoSkip: true, maxRotation: 0 },
+            ticks: { autoSkip: true, maxRotation: 0, color: textColor },
             grid: { display: false },
           },
           y: {
             beginAtZero: true,
-            ticks: { precision: 0 },
+            ticks: { precision: 0, color: textColor },
+            grid: { color: gridColor },
           },
         },
         plugins: {
@@ -321,6 +367,16 @@
 
   // ====== App init ======
   async function init() {
+    // Keep theme in sync with system preference (including when user changes it while the page is open)
+    const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq) {
+      // Safari uses addListener/removeListener, modern browsers use addEventListener
+      if (typeof mq.addEventListener === "function") mq.addEventListener("change", onThemeChange);
+      else if (typeof mq.addListener === "function") mq.addListener(onThemeChange);
+    }
+
+    applyThemeFromSystem();
+
     setLoading(true);
     hideAlert();
 
