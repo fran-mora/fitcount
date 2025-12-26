@@ -467,8 +467,8 @@
       $spendBtn.off("click").on("click", async () => {
         const val = $spendAmountInput.val();
         const amt = parseFloat(val);
-        if (isNaN(amt) || amt <= 0) {
-          showAlert("Please enter a valid amount (> 0)", "warning");
+        if (isNaN(amt) || amt === 0) {
+          showAlert("Please enter a valid amount (not 0)", "warning");
           return;
         }
 
