@@ -31,7 +31,14 @@
   const $alert = $("#alert");
   const $loading = $("#loading");
   const $repsChartCanvas = $("#repsChart");
+  const $last5DaysList = $("#last5DaysList");
+  const $rewardsText = $("#rewardsText");
+  const $rewardsContainer = $("#rewardsContainer");
+  const $spendAmountInput = $("#spendAmountInput");
+  const $spendBtn = $("#spendBtn");
+  const $modalRewardsBalance = $("#modalRewardsBalance");
   let repsChart = null;
+  let rewardsModal = null;
 
   // ====== Theme helpers (sync Bootstrap color mode with OS preference) ======
   function isDarkModeActive() {
@@ -140,6 +147,9 @@
     $startDateText.text(state.start_date);
     $balanceText.text(state.balance.toString());
 
+    const rewards = parseFloat(state.rewards_balance) || 0;
+    $rewardsText.text(rewards.toFixed(1));
+
     // Enable rep buttons (balance can be negative)
     $rep1Btn.prop("disabled", false);
     $rep5Btn.prop("disabled", false);
@@ -208,10 +218,47 @@
     });
   }
 
+  function renderLast5Days(rows) {
+    if (!$last5DaysList.length) return;
+    $last5DaysList.empty();
+
+    const today = new Date();
+    const listItems = [];
+
+    // Last 5 days including today
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const ymd = toYMDLocal(d);
+
+      const row = rows.find((r) => r.rep_date === ymd);
+      const count = row ? row.reps : 0;
+
+      let label = ymd;
+      if (i === 0) label = "Today";
+      else if (i === 1) label = "Yesterday";
+      else {
+        // Format: "Mon, Oct 4"
+        label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      }
+
+      const html = `
+        <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+          <span>${label}</span>
+          <span class="badge bg-primary rounded-pill">${count}</span>
+        </li>
+      `;
+      listItems.push(html);
+    }
+
+    $last5DaysList.append(listItems);
+  }
+
   async function refreshRepsChart() {
     try {
       const rows = await loadRepsHistory();
       renderRepsChart(rows);
+      renderLast5Days(rows);
     } catch (e) {
       console.warn("Unable to load reps history:", e);
     }
@@ -260,7 +307,7 @@
       const lastProcessed = addDaysYMD(start, -1);
       const { data: inserted, error: insErr } = await supabase
         .from("fit_state")
-        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0, daily_drain: 100 }])
+        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0, daily_drain: 100, rewards_balance: 0 }])
         .select()
         .single();
 
@@ -319,9 +366,13 @@
     const inc = Number(amount) || 1;
     const newBal = state.balance + inc;
 
+    const currentRewards = parseFloat(state.rewards_balance) || 0;
+    const rewardsInc = inc * 0.5;
+    const newRewards = currentRewards + rewardsInc;
+
     const { data: updated, error } = await supabase
       .from("fit_state")
-      .update({ balance: newBal })
+      .update({ balance: newBal, rewards_balance: newRewards })
       .eq("id", "singleton")
       .select()
       .single();
@@ -345,6 +396,21 @@
   // Backward compatibility helper (unused now, but kept just in case)
   async function incrementOne(state) {
     return incrementBy(state, 1);
+  }
+
+  async function spendRewards(state, amount) {
+    const currentRewards = parseFloat(state.rewards_balance) || 0;
+    const newRewards = currentRewards - amount;
+
+    const { data: updated, error } = await supabase
+      .from("fit_state")
+      .update({ rewards_balance: newRewards })
+      .eq("id", "singleton")
+      .select()
+      .single();
+
+    if (error) throw error;
+    return updated;
   }
 
   async function updateDailyDrain(state, newDrain) {
@@ -387,6 +453,40 @@
 
       refreshUI(state, { drainedNow });
       await refreshRepsChart();
+
+      rewardsModal = new bootstrap.Modal(document.getElementById("rewardsModal"));
+
+      // Wire up rewards interaction
+      $rewardsContainer.off("click").on("click", () => {
+        const r = parseFloat(state.rewards_balance) || 0;
+        $modalRewardsBalance.text(r.toFixed(1));
+        $spendAmountInput.val("");
+        rewardsModal.show();
+      });
+
+      $spendBtn.off("click").on("click", async () => {
+        const val = $spendAmountInput.val();
+        const amt = parseFloat(val);
+        if (isNaN(amt) || amt <= 0) {
+          showAlert("Please enter a valid amount (> 0)", "warning");
+          return;
+        }
+
+        $spendBtn.prop("disabled", true);
+        try {
+          const updated = await spendRewards(state, amt);
+          state = updated;
+          refreshUI(state);
+          rewardsModal.hide();
+          showAlert(`Spent ${amt} minutes.`, "success");
+          setTimeout(hideAlert, 2000);
+        } catch (e) {
+          console.error(e);
+          showAlert(`Error spending rewards: ${e.message}`, "danger");
+        } finally {
+          $spendBtn.prop("disabled", false);
+        }
+      });
 
       // Wire up rep buttons
       function setRepButtonsDisabled(disabled) {
