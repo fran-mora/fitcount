@@ -350,11 +350,12 @@
     const totalDrain = daysToProcess * dailyDrain;
     const newBalance = state.balance - totalDrain;
 
+    // Update balance only (tokens). Do NOT touch rewards_balance.
     const { data: updated, error: updErr } = await supabase
       .from("fit_state")
       .update({ balance: newBalance, last_credited_date: today })
       .eq("id", "singleton")
-      .select()
+      .select("*")
       .single();
 
     if (updErr) throw updErr;
@@ -374,7 +375,7 @@
       .from("fit_state")
       .update({ balance: newBal, rewards_balance: newRewards })
       .eq("id", "singleton")
-      .select()
+      .select("*")
       .single();
 
     if (error) {
@@ -406,7 +407,7 @@
       .from("fit_state")
       .update({ rewards_balance: newRewards })
       .eq("id", "singleton")
-      .select()
+      .select("*")
       .single();
 
     if (error) throw error;
@@ -418,7 +419,7 @@
       .from("fit_state")
       .update({ daily_drain: newDrain })
       .eq("id", "singleton")
-      .select()
+      .select("*")
       .single();
 
     if (error) {
