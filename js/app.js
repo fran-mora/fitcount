@@ -150,6 +150,12 @@
     const rewards = parseFloat(state.rewards_balance) || 0;
     $rewardsText.text(rewards.toFixed(1));
 
+    if (rewards < 0) {
+      $rewardsText.removeClass("text-success").addClass("text-danger");
+    } else {
+      $rewardsText.removeClass("text-danger").addClass("text-success");
+    }
+
     // Enable rep buttons (balance can be negative)
     $rep1Btn.prop("disabled", false);
     $rep5Btn.prop("disabled", false);
