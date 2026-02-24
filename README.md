@@ -264,6 +264,20 @@ The app tracks submission entries in a panel at the bottom of the page.
 - On page load, today's submissions are fetched and displayed (time + amount).
 - Data is stored in the `fit_submissions` table (see migration above).
 
+### Fallback behavior (missing table)
+
+If the `fit_submissions` table has not been created in Supabase (e.g. the migration
+`20260224120000_add_fit_submissions.sql` has not been run), the app will:
+
+1. **Show a visible warning alert** explaining that submissions storage is unavailable and
+   directing the user to run the migration.
+2. **Fall back to in-memory local storage** for the current browser session so the panel
+   still updates and shows submission entries.
+3. Local submissions are **not persisted** — they are lost on page reload.
+
+To restore full persistent submissions, run the migration SQL in your Supabase SQL Editor
+and reload the page.
+
 
 ## 9) Resetting data (danger)
 

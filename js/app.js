@@ -281,11 +281,31 @@
     }
   }
 
-  // ====== Submissions (5-second aggregation) ======
+  // ====== Submissions (5-second aggregation with local fallback) ======
   const AGGREGATION_WINDOW_MS = 5000;
   let pendingSubmission = null; // { amount, timer }
+  let submissionsUseLocal = false; // true when fit_submissions table is unavailable
+  let localSubmissions = []; // in-memory fallback for current day
+
+  function isTableMissingError(err) {
+    if (!err) return false;
+    const msg = (err.message || err.code || "").toLowerCase();
+    return msg.includes("pgrst205") || msg.includes("not found") || msg.includes("does not exist") || msg.includes("relation") || msg.includes("42p01");
+  }
+
+  function showSubmissionsUnavailableAlert() {
+    showAlert(
+      "Submissions storage unavailable: the fit_submissions table is missing in Supabase. " +
+      "Run the migration in supabase/migrations/20260224120000_add_fit_submissions.sql to enable persistent submissions. " +
+      "Using local (in-memory) fallback for this session.",
+      "warning"
+    );
+  }
 
   async function loadTodaysSubmissions() {
+    if (submissionsUseLocal) {
+      return localSubmissions;
+    }
     const today = todayYMD();
     const { data, error } = await supabase
       .from("fit_submissions")
@@ -293,7 +313,14 @@
       .eq("submission_date", today)
       .order("submitted_at", { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      if (isTableMissingError(error)) {
+        submissionsUseLocal = true;
+        showSubmissionsUnavailableAlert();
+        return localSubmissions;
+      }
+      throw error;
+    }
     return data || [];
   }
 
@@ -330,14 +357,29 @@
 
   async function flushSubmission(amount) {
     const today = todayYMD();
-    try {
-      const { error } = await supabase
-        .from("fit_submissions")
-        .insert({ amount, submission_date: today });
-      if (error) console.warn("Failed to save submission:", error);
-    } catch (e) {
-      console.warn("Error saving submission:", e);
+
+    if (submissionsUseLocal) {
+      localSubmissions.unshift({ submitted_at: new Date().toISOString(), amount, submission_date: today });
+      renderSubmissions(localSubmissions);
+      return;
     }
+
+    const { error } = await supabase
+      .from("fit_submissions")
+      .insert({ amount, submission_date: today });
+
+    if (error) {
+      if (isTableMissingError(error)) {
+        submissionsUseLocal = true;
+        showSubmissionsUnavailableAlert();
+        localSubmissions.unshift({ submitted_at: new Date().toISOString(), amount, submission_date: today });
+        renderSubmissions(localSubmissions);
+        return;
+      }
+      console.warn("Failed to save submission:", error);
+      showAlert("Failed to save submission: " + error.message, "danger");
+    }
+
     await refreshSubmissions();
   }
 
