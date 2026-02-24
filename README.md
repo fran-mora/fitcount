@@ -20,6 +20,7 @@ Files:
   - 20251008193000_add_fit_daily_drain.sql
   - 20251008113100_reset_fit_data.sql (danger: destructive reset script)
   - 20251013084700_add_daily_drain_column.sql (adds editable daily_drain field)
+  - 20260224120000_add_fit_submissions.sql (submissions tracking table)
 - README.md — setup and notes (this file)
 
 
@@ -132,6 +133,40 @@ using (true)
 with check (true);
 ```
 
+Submissions history (tracks aggregated rep submissions per session):
+```sql
+create table if not exists public.fit_submissions (
+  id bigint generated always as identity primary key,
+  submitted_at timestamptz not null default now(),
+  amount integer not null default 0,
+  submission_date date not null default current_date
+);
+
+alter table public.fit_submissions enable row level security;
+
+drop policy if exists "anon select submissions" on public.fit_submissions;
+create policy "anon select submissions"
+on public.fit_submissions
+for select
+to anon
+using (true);
+
+drop policy if exists "anon insert submissions" on public.fit_submissions;
+create policy "anon insert submissions"
+on public.fit_submissions
+for insert
+to anon
+with check (true);
+
+drop policy if exists "anon update submissions" on public.fit_submissions;
+create policy "anon update submissions"
+on public.fit_submissions
+for update
+to anon
+using (true)
+with check (true);
+```
+
 Notes:
 - The app will automatically create the singleton row on first run. No manual seeding required.
 - We intentionally allow anon role (public) because this is single-user and uses the anon key on GitHub Pages. Policies restrict it appropriately.
@@ -218,7 +253,19 @@ Notes:
 - The chart is powered by Chart.js and renders bars per date.
 
 
-## 8) Resetting data (danger)
+## 8) Today's Submissions
+
+The app tracks submission entries in a panel at the bottom of the page.
+
+- Each rep button click (+1, +5, +10) starts or extends a submission.
+- Clicks within a **5-second window** are aggregated into a single submission entry.
+- Example: clicking +10, then +1, then +1 quickly produces one entry with amount 12.
+- After 5 seconds of no clicks, the aggregated submission is flushed to Supabase.
+- On page load, today's submissions are fetched and displayed (time + amount).
+- Data is stored in the `fit_submissions` table (see migration above).
+
+
+## 9) Resetting data (danger)
 
 Use `supabase/migrations/20251008113100_reset_fit_data.sql` in Supabase SQL Editor to clear app data:
 - Truncates `fit_reps`

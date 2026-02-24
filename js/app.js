@@ -32,13 +32,8 @@
   const $loading = $("#loading");
   const $repsChartCanvas = $("#repsChart");
   const $last5DaysList = $("#last5DaysList");
-  const $rewardsText = $("#rewardsText");
-  const $rewardsContainer = $("#rewardsContainer");
-  const $spendAmountInput = $("#spendAmountInput");
-  const $spendBtn = $("#spendBtn");
-  const $modalRewardsBalance = $("#modalRewardsBalance");
+  const $submissionsList = $("#submissionsList");
   let repsChart = null;
-  let rewardsModal = null;
 
   // ====== Theme helpers (sync Bootstrap color mode with OS preference) ======
   function isDarkModeActive() {
@@ -146,15 +141,6 @@
     $lastCreditedText.text(state.last_credited_date);
     $startDateText.text(state.start_date);
     $balanceText.text(state.balance.toString());
-
-    const rewards = parseFloat(state.rewards_balance) || 0;
-    $rewardsText.text(rewards.toFixed(1));
-
-    if (rewards < 0) {
-      $rewardsText.removeClass("text-success").addClass("text-danger");
-    } else {
-      $rewardsText.removeClass("text-danger").addClass("text-success");
-    }
 
     // Enable rep buttons (balance can be negative)
     $rep1Btn.prop("disabled", false);
@@ -295,6 +281,80 @@
     }
   }
 
+  // ====== Submissions (5-second aggregation) ======
+  const AGGREGATION_WINDOW_MS = 5000;
+  let pendingSubmission = null; // { amount, timer }
+
+  async function loadTodaysSubmissions() {
+    const today = todayYMD();
+    const { data, error } = await supabase
+      .from("fit_submissions")
+      .select("*")
+      .eq("submission_date", today)
+      .order("submitted_at", { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  function renderSubmissions(rows) {
+    if (!$submissionsList.length) return;
+    $submissionsList.empty();
+
+    if (!rows.length) {
+      $submissionsList.append('<div class="text-muted small text-center py-2">No submissions yet today.</div>');
+      return;
+    }
+
+    const items = rows.map((r) => {
+      const t = new Date(r.submitted_at);
+      const time = t.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      return `
+        <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+          <span class="small">${time}</span>
+          <span class="badge bg-primary rounded-pill">+${r.amount}</span>
+        </li>`;
+    });
+
+    $submissionsList.append('<ul class="list-group list-group-flush small">' + items.join("") + "</ul>");
+  }
+
+  async function refreshSubmissions() {
+    try {
+      const rows = await loadTodaysSubmissions();
+      renderSubmissions(rows);
+    } catch (e) {
+      console.warn("Unable to load submissions:", e);
+    }
+  }
+
+  async function flushSubmission(amount) {
+    const today = todayYMD();
+    try {
+      const { error } = await supabase
+        .from("fit_submissions")
+        .insert({ amount, submission_date: today });
+      if (error) console.warn("Failed to save submission:", error);
+    } catch (e) {
+      console.warn("Error saving submission:", e);
+    }
+    await refreshSubmissions();
+  }
+
+  function trackSubmission(amount) {
+    if (pendingSubmission) {
+      clearTimeout(pendingSubmission.timer);
+      pendingSubmission.amount += amount;
+    } else {
+      pendingSubmission = { amount };
+    }
+    pendingSubmission.timer = setTimeout(() => {
+      const total = pendingSubmission.amount;
+      pendingSubmission = null;
+      flushSubmission(total);
+    }, AGGREGATION_WINDOW_MS);
+  }
+
   // ====== Data layer ======
   async function ensureStateRow() {
     const { data, error } = await supabase
@@ -313,7 +373,7 @@
       const lastProcessed = addDaysYMD(start, -1);
       const { data: inserted, error: insErr } = await supabase
         .from("fit_state")
-        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0, daily_drain: 100, rewards_balance: 0 }])
+        .insert([{ id: "singleton", start_date: start, last_credited_date: lastProcessed, balance: 0, daily_drain: 100 }])
         .select()
         .single();
 
@@ -356,7 +416,7 @@
     const totalDrain = daysToProcess * dailyDrain;
     const newBalance = state.balance - totalDrain;
 
-    // Update balance only (tokens). Do NOT touch rewards_balance.
+    // Update balance (tokens).
     const { data: updated, error: updErr } = await supabase
       .from("fit_state")
       .update({ balance: newBalance, last_credited_date: today })
@@ -373,13 +433,9 @@
     const inc = Number(amount) || 1;
     const newBal = state.balance + inc;
 
-    const currentRewards = parseFloat(state.rewards_balance) || 0;
-    const rewardsInc = inc * 0.5;
-    const newRewards = currentRewards + rewardsInc;
-
     const { data: updated, error } = await supabase
       .from("fit_state")
-      .update({ balance: newBal, rewards_balance: newRewards })
+      .update({ balance: newBal })
       .eq("id", "singleton")
       .select("*")
       .single();
@@ -397,26 +453,6 @@
       showAlert("Saved balance, but failed to record today's reps history.", "warning");
     }
 
-    return updated;
-  }
-
-  // Backward compatibility helper (unused now, but kept just in case)
-  async function incrementOne(state) {
-    return incrementBy(state, 1);
-  }
-
-  async function spendRewards(state, amount) {
-    const currentRewards = parseFloat(state.rewards_balance) || 0;
-    const newRewards = currentRewards - amount;
-
-    const { data: updated, error } = await supabase
-      .from("fit_state")
-      .update({ rewards_balance: newRewards })
-      .eq("id", "singleton")
-      .select("*")
-      .single();
-
-    if (error) throw error;
     return updated;
   }
 
@@ -460,40 +496,7 @@
 
       refreshUI(state, { drainedNow });
       await refreshRepsChart();
-
-      rewardsModal = new bootstrap.Modal(document.getElementById("rewardsModal"));
-
-      // Wire up rewards interaction
-      $rewardsContainer.off("click").on("click", () => {
-        const r = parseFloat(state.rewards_balance) || 0;
-        $modalRewardsBalance.text(r.toFixed(1));
-        $spendAmountInput.val("");
-        rewardsModal.show();
-      });
-
-      $spendBtn.off("click").on("click", async () => {
-        const val = $spendAmountInput.val();
-        const amt = parseFloat(val);
-        if (isNaN(amt) || amt === 0) {
-          showAlert("Please enter a valid amount (not 0)", "warning");
-          return;
-        }
-
-        $spendBtn.prop("disabled", true);
-        try {
-          const updated = await spendRewards(state, amt);
-          state = updated;
-          refreshUI(state);
-          rewardsModal.hide();
-          showAlert(`Spent ${amt} minutes.`, "success");
-          setTimeout(hideAlert, 2000);
-        } catch (e) {
-          console.error(e);
-          showAlert(`Error spending rewards: ${e.message}`, "danger");
-        } finally {
-          $spendBtn.prop("disabled", false);
-        }
-      });
+      await refreshSubmissions();
 
       // Wire up rep buttons
       function setRepButtonsDisabled(disabled) {
@@ -509,6 +512,7 @@
           state = updated;
           refreshUI(state, { drainedNow: 0 });
           await refreshRepsChart();
+          trackSubmission(amt);
         } finally {
           setRepButtonsDisabled(false);
         }
