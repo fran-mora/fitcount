@@ -665,6 +665,100 @@
       $rep5Btn.off("click").on("click", handleAdd(5));
       $rep10Btn.off("click").on("click", handleAdd(10));
 
+      // ===== Interval workout (10 reps/min, 30s work / 30s rest) =====
+      const $startWorkoutBtn = $("#startWorkoutBtn");
+      const $workoutOverlay = $("#workoutOverlay");
+      const $workoutRunning = $("#workoutRunning");
+      const $workoutReview = $("#workoutReview");
+      const $workoutClock = $("#workoutClock");
+      const $workoutPhase = $("#workoutPhase");
+      const $workoutMinuteText = $("#workoutMinuteText");
+      const $workoutPhaseCountdown = $("#workoutPhaseCountdown");
+      const $workoutLivePoints = $("#workoutLivePoints");
+      const $workoutStopBtn = $("#workoutStopBtn");
+      const $workoutSummaryText = $("#workoutSummaryText");
+      const $workoutPointsInput = $("#workoutPointsInput");
+      const $workoutConfirmBtn = $("#workoutConfirmBtn");
+      const $workoutDiscardBtn = $("#workoutDiscardBtn");
+
+      let workoutInterval = null;
+      let workoutStartMs = 0;
+      let workoutLastPhase = null;
+
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const fmtClock = (totalSec) => `${pad2(Math.floor(totalSec / 60))}:${pad2(totalSec % 60)}`;
+      // Each minute = 10 points; suggestion rounds up to the next whole minute.
+      const suggestPoints = (totalSec) => (totalSec <= 0 ? 0 : Math.ceil(totalSec / 60) * 10);
+
+      function tickWorkout() {
+        const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
+        $workoutClock.text(fmtClock(totalSec));
+
+        const minute = Math.floor(totalSec / 60) + 1;
+        const secInMin = totalSec % 60;
+        const inWork = secInMin < 30;
+        const phase = inWork ? "work" : "rest";
+
+        if (phase !== workoutLastPhase) {
+          workoutLastPhase = phase;
+          if (navigator.vibrate) navigator.vibrate(inWork ? [120, 60, 120] : 80);
+        }
+
+        $workoutPhase.text(inWork ? "WORK" : "REST").removeClass("work rest").addClass(phase);
+        $workoutMinuteText.text(`Minute ${minute} · do 10 reps`);
+        const phaseLeft = inWork ? 30 - secInMin : 60 - secInMin;
+        $workoutPhaseCountdown.text(inWork ? `${phaseLeft}s of work left` : `${phaseLeft}s rest — next set soon`);
+        $workoutLivePoints.text(suggestPoints(totalSec));
+      }
+
+      function startWorkout() {
+        workoutStartMs = Date.now();
+        workoutLastPhase = null;
+        $workoutReview.hide();
+        $workoutRunning.show();
+        $workoutOverlay.addClass("show").attr("aria-hidden", "false");
+        tickWorkout();
+        workoutInterval = setInterval(tickWorkout, 250);
+      }
+
+      function stopWorkout() {
+        if (workoutInterval) { clearInterval(workoutInterval); workoutInterval = null; }
+        const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
+        $workoutSummaryText.text(`You trained for ${fmtClock(totalSec)}`);
+        $workoutPointsInput.val(suggestPoints(totalSec));
+        $workoutRunning.hide();
+        $workoutReview.show();
+      }
+
+      function closeWorkout() {
+        if (workoutInterval) { clearInterval(workoutInterval); workoutInterval = null; }
+        $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
+      }
+
+      $startWorkoutBtn.prop("disabled", false).off("click").on("click", startWorkout);
+      $workoutStopBtn.off("click").on("click", stopWorkout);
+      $workoutDiscardBtn.off("click").on("click", closeWorkout);
+      $workoutConfirmBtn.off("click").on("click", async () => {
+        const pts = parseInt($workoutPointsInput.val(), 10);
+        if (isNaN(pts) || pts < 0) {
+          showAlert("Enter a valid number of points (0 or greater)", "warning");
+          return;
+        }
+        $workoutConfirmBtn.prop("disabled", true);
+        try {
+          if (pts > 0) {
+            state = await incrementBy(state, pts);
+            state = await maybeAutoBumpDrain(state);
+            refreshUI(state, { drainedNow: 0 });
+            await refreshRepsChart();
+            trackSubmission(pts);
+          }
+          closeWorkout();
+        } finally {
+          $workoutConfirmBtn.prop("disabled", false);
+        }
+      });
+
       // Wire up daily drain update button
       $updateDrainBtn.off("click").on("click", async () => {
         $updateDrainBtn.prop("disabled", true);

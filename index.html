@@ -67,6 +67,18 @@
       </div>
 
       <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body d-flex justify-content-between align-items-center">
+            <div>
+              <div class="text-muted small">Interval Workout</div>
+              <div class="small">10 reps every minute · 30s work / 30s rest</div>
+            </div>
+            <button id="startWorkoutBtn" class="btn btn-lg btn-success px-4" disabled>Start</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
         <div class="card shadow-sm tier-card">
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
@@ -186,6 +198,32 @@
     <footer class="text-center mt-4 text-muted small">
       Daily drain: tokens are removed automatically each day. Add tokens by doing reps (+1 each).
     </footer>
+  </div>
+
+  <!-- Interval Workout overlay -->
+  <div id="workoutOverlay" class="workout-overlay" aria-hidden="true">
+    <div class="workout-inner text-center">
+      <!-- Running -->
+      <div id="workoutRunning">
+        <div id="workoutPhase" class="workout-phase work">WORK</div>
+        <div id="workoutClock" class="workout-clock">00:00</div>
+        <div id="workoutMinuteText" class="workout-sub text-muted">Minute 1 · do 10 reps</div>
+        <div id="workoutPhaseCountdown" class="workout-phasecountdown">30s of work left</div>
+        <div class="workout-points">Suggested: <span id="workoutLivePoints">0</span> pts</div>
+        <button id="workoutStopBtn" class="btn btn-lg btn-danger px-5 mt-3">Stop</button>
+      </div>
+      <!-- Review -->
+      <div id="workoutReview" style="display:none;">
+        <div class="workout-phase work">DONE</div>
+        <div id="workoutSummaryText" class="text-muted mb-3">You trained for 00:00</div>
+        <div class="text-muted small mb-2">Points to add (edit if needed)</div>
+        <input type="number" id="workoutPointsInput" class="form-control form-control-lg text-center workout-points-input" min="0" value="0" />
+        <div class="d-flex gap-2 justify-content-center mt-3">
+          <button id="workoutConfirmBtn" class="btn btn-lg btn-success px-4">Confirm</button>
+          <button id="workoutDiscardBtn" class="btn btn-lg btn-outline-secondary px-4">Discard</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- jQuery -->

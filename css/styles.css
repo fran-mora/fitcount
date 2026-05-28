@@ -72,6 +72,45 @@ footer {
   100% { box-shadow: 0 0 0 0 rgba(25,135,84,0); }
 }
 
+/* Interval workout overlay */
+.workout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1080;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--bs-body-bg);
+  padding: 1.5rem;
+}
+.workout-overlay.show { display: flex; }
+.workout-inner { width: 100%; max-width: 480px; }
+.workout-phase {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: .4rem 1.1rem;
+  border-radius: .75rem;
+  display: inline-block;
+  margin-bottom: 1rem;
+}
+.workout-phase.work { background: rgba(25,135,84,.15); color: #198754; }
+.workout-phase.rest { background: rgba(13,110,253,.15); color: #0d6efd; }
+.workout-clock {
+  font-size: 5rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.workout-sub { font-size: 1.1rem; margin-top: .5rem; }
+.workout-phasecountdown { font-size: 1rem; margin-top: .25rem; opacity: .8; }
+.workout-points { font-size: 1.1rem; margin-top: 1rem; }
+.workout-points-input { max-width: 200px; margin: 0 auto; font-weight: 700; }
+@media (max-width: 576px) {
+  .workout-clock { font-size: 4rem; }
+}
+
 /* Chart area: fix height so Chart.js doesn't grow infinitely */
 .chart-fixed-height {
   position: relative;

@@ -301,7 +301,21 @@ Behaviour:
   snap up, values above MAX (200) snap down.
 - No schema change required — uses the existing `daily_drain` column on `fit_state`.
 
-## 10) Resetting data (danger)
+## 10) Interval Workout
+
+A timer mode for "10 reps every minute, 30s work / 30s rest" sessions.
+
+- Tap **Start** (Interval Workout card) to open a full-screen timer overlay.
+- The overlay shows elapsed time, a WORK/REST phase banner that flips every 30s
+  (with a haptic buzz on supported devices), the current minute, and a live
+  suggested-points readout.
+- Tap **Stop** when done. Suggested points = `ceil(elapsed_minutes) * 10`
+  (each minute = 10 reps/points, rounded up to the next whole minute).
+- Edit the number if you did fewer/more, then **Confirm** to add it to the daily
+  count (updates balance, today's reps histogram, a submission entry, and triggers
+  the tier ratchet). **Discard** closes without recording anything.
+
+## 11) Resetting data (danger)
 
 Use `supabase/migrations/20251008113100_reset_fit_data.sql` in Supabase SQL Editor to clear app data:
 - Truncates `fit_reps`
