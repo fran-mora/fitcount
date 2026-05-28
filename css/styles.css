@@ -50,6 +50,28 @@ footer {
   padding-bottom: 0.5rem;
 }
 
+/* Tier progress */
+.tier-progress {
+  height: 0.75rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.tier-card .progress-bar {
+  transition: width 600ms ease;
+}
+.tier-card.tier-maxed {
+  border-color: #198754;
+  box-shadow: 0 0 0 1px rgba(25, 135, 84, 0.35), 0 .125rem .25rem rgba(0,0,0,.075);
+}
+.tier-bump-flash {
+  animation: tier-flash 1.2s ease-in-out;
+}
+@keyframes tier-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(25,135,84,0); }
+  30%  { box-shadow: 0 0 0 6px rgba(25,135,84,0.35); }
+  100% { box-shadow: 0 0 0 0 rgba(25,135,84,0); }
+}
+
 /* Chart area: fix height so Chart.js doesn't grow infinitely */
 .chart-fixed-height {
   position: relative;

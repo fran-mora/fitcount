@@ -33,7 +33,38 @@
   const $repsChartCanvas = $("#repsChart");
   const $last5DaysList = $("#last5DaysList");
   const $submissionsList = $("#submissionsList");
+  const $tierLabel = $("#tierLabel");
+  const $nextUnlockText = $("#nextUnlockText");
+  const $tierProgressBar = $("#tierProgressBar");
+  const $tierHintText = $("#tierHintText");
+  const $tierCard = $(".tier-card");
+  const $drainFloorText = $("#drainFloorText");
   let repsChart = null;
+
+  // ====== Tier ladder ======
+  // Base drain 110 → at balance >= 200 unlock drain 120; every +100 tokens unlocks +10 drain,
+  // capped at MAX_DRAIN. One-way ratchet: drain never auto-decreases.
+  const BASE_DRAIN = 110;
+  const MAX_DRAIN = 200;
+  const TIER_STEP = 10;            // drain bump per tier
+  const TOKEN_STEP = 100;          // tokens needed per tier
+  const FIRST_THRESHOLD = 200;     // balance needed to unlock tier 1
+  const MAX_TIER = (MAX_DRAIN - BASE_DRAIN) / TIER_STEP; // = 9
+
+  function tierFor(balance) {
+    if (balance < FIRST_THRESHOLD) return 0;
+    const t = Math.floor((balance - (FIRST_THRESHOLD - TOKEN_STEP)) / TOKEN_STEP);
+    return Math.max(0, Math.min(MAX_TIER, t));
+  }
+
+  function autoMinDrain(balance) {
+    return BASE_DRAIN + tierFor(balance) * TIER_STEP;
+  }
+
+  function thresholdForTier(t) {
+    // Tier 0 unlocked at -inf; tier t (>=1) unlocked at FIRST_THRESHOLD + (t-1)*TOKEN_STEP
+    return FIRST_THRESHOLD + (t - 1) * TOKEN_STEP;
+  }
 
   // ====== Theme helpers (sync Bootstrap color mode with OS preference) ======
   function isDarkModeActive() {
@@ -142,10 +173,52 @@
     $startDateText.text(state.start_date);
     $balanceText.text(state.balance.toString());
 
+    renderTier(state);
+
     // Enable rep buttons (balance can be negative)
     $rep1Btn.prop("disabled", false);
     $rep5Btn.prop("disabled", false);
     $rep10Btn.prop("disabled", false);
+  }
+
+  function renderTier(state) {
+    const bal = state.balance;
+    const tier = tierFor(bal);
+    const floor = autoMinDrain(bal);
+
+    $drainFloorText.text(floor);
+    $dailyDrainInput.attr("min", floor);
+
+    if (tier >= MAX_TIER) {
+      $tierLabel.text(`Tier ${MAX_TIER} / ${MAX_TIER} — MAX (drain ${MAX_DRAIN})`);
+      $nextUnlockText.text("Maxed out");
+      $tierProgressBar.css("width", "100%").removeClass("bg-success bg-primary").addClass("bg-success");
+      $tierHintText.text(`Top tier reached. Daily drain is locked at the maximum of ${MAX_DRAIN}.`);
+      $tierCard.addClass("tier-maxed");
+      return;
+    }
+
+    $tierCard.removeClass("tier-maxed");
+
+    const nextTier = tier + 1;
+    const nextDrain = BASE_DRAIN + nextTier * TIER_STEP;
+    const nextAt = thresholdForTier(nextTier);
+    const prevAt = tier === 0 ? 0 : thresholdForTier(tier);
+    const span = Math.max(1, nextAt - prevAt);
+    const pct = Math.max(0, Math.min(100, ((bal - prevAt) / span) * 100));
+    const toGo = Math.max(0, nextAt - bal);
+
+    $tierLabel.text(`Tier ${tier} / ${MAX_TIER} — drain ${state.daily_drain}`);
+    $nextUnlockText.text(`${nextAt} tokens → drain ${nextDrain} (${toGo} to go)`);
+    $tierProgressBar.css("width", pct + "%").removeClass("bg-success bg-primary").addClass("bg-primary");
+    $tierHintText.text(`Reach ${nextAt} tokens to bump daily drain to ${nextDrain}.`);
+  }
+
+  function flashTierCelebration(oldDrain, newDrain) {
+    showAlert(`🎉 Tier up! Daily drain promoted from ${oldDrain} to ${newDrain}.`, "success");
+    setTimeout(hideAlert, 4000);
+    $tierCard.addClass("tier-bump-flash");
+    setTimeout(() => $tierCard.removeClass("tier-bump-flash"), 1300);
   }
 
   // ====== Reps history (Chart) ======
@@ -516,6 +589,29 @@
     return updated;
   }
 
+  // One-way ratchet: if the balance qualifies for a higher drain than currently set,
+  // raise the drain to the floor and notify. Never lowers automatically.
+  async function maybeAutoBumpDrain(state) {
+    const floor = autoMinDrain(state.balance);
+    if (floor <= (state.daily_drain || 0)) return state;
+
+    const oldDrain = state.daily_drain;
+    const { data: updated, error } = await supabase
+      .from("fit_state")
+      .update({ daily_drain: floor })
+      .eq("id", "singleton")
+      .select("*")
+      .single();
+
+    if (error) {
+      console.warn("Failed to auto-bump daily drain:", error);
+      return state;
+    }
+
+    flashTierCelebration(oldDrain, floor);
+    return updated;
+  }
+
   // ====== App init ======
   async function init() {
     // Keep theme in sync with system preference (including when user changes it while the page is open)
@@ -536,6 +632,9 @@
       const { state: processedState, drainedNow } = await processDrainIfNeeded(state);
       state = processedState;
 
+      // Apply ratchet at boot (in case the user's balance already qualifies for a higher tier)
+      state = await maybeAutoBumpDrain(state);
+
       refreshUI(state, { drainedNow });
       await refreshRepsChart();
       await refreshSubmissions();
@@ -552,6 +651,8 @@
         try {
           const updated = await incrementBy(state, amt);
           state = updated;
+          // Ratchet check after every rep — this is where tier-ups happen
+          state = await maybeAutoBumpDrain(state);
           refreshUI(state, { drainedNow: 0 });
           await refreshRepsChart();
           trackSubmission(amt);
@@ -568,10 +669,21 @@
       $updateDrainBtn.off("click").on("click", async () => {
         $updateDrainBtn.prop("disabled", true);
         try {
-          const newDrain = parseInt($dailyDrainInput.val(), 10);
+          let newDrain = parseInt($dailyDrainInput.val(), 10);
           if (isNaN(newDrain) || newDrain < 0) {
             showAlert("Please enter a valid number (0 or greater)", "warning");
             return;
+          }
+          const floor = autoMinDrain(state.balance);
+          if (newDrain < floor) {
+            showAlert(`Drain cannot go below the current tier floor of ${floor}. Snapped up.`, "warning");
+            setTimeout(hideAlert, 3500);
+            newDrain = floor;
+          }
+          if (newDrain > MAX_DRAIN) {
+            showAlert(`Drain capped at the maximum of ${MAX_DRAIN}.`, "warning");
+            setTimeout(hideAlert, 3500);
+            newDrain = MAX_DRAIN;
           }
           const updated = await updateDailyDrain(state, newDrain);
           state = updated;

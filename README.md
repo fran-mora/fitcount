@@ -279,7 +279,29 @@ To restore full persistent submissions, run the migration SQL in your Supabase S
 and reload the page.
 
 
-## 9) Resetting data (danger)
+## 9) Tier ladder (gamified daily drain)
+
+The daily drain auto-ratchets up as your balance crosses token thresholds. It never
+auto-decreases.
+
+| Tier | Unlock at balance ≥ | Daily drain |
+|------|---------------------|-------------|
+| 0    | —                   | 110         |
+| 1    | 200                 | 120         |
+| 2    | 300                 | 130         |
+| 3    | 400                 | 140         |
+| …    | …                   | …           |
+| 9    | 1000                | 200 (MAX)   |
+
+Behaviour:
+- After every rep, and on page load, the app checks `tier(balance)` and bumps `daily_drain`
+  in `fit_state` if the current value is below the floor for that tier.
+- A celebratory alert + card flash fires when a tier-up happens.
+- The Daily Drain input is clamped to the current tier floor: manual values below the floor
+  snap up, values above MAX (200) snap down.
+- No schema change required — uses the existing `daily_drain` column on `fit_state`.
+
+## 10) Resetting data (danger)
 
 Use `supabase/migrations/20251008113100_reset_fit_data.sql` in Supabase SQL Editor to clear app data:
 - Truncates `fit_reps`

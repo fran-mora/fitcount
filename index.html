@@ -66,6 +66,29 @@
         </div>
       </div>
 
+      <div class="col-12">
+        <div class="card shadow-sm tier-card">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <div>
+                <div class="text-muted small">Tier Progress</div>
+                <div class="fw-semibold"><span id="tierLabel">Tier — / —</span></div>
+              </div>
+              <div class="text-end">
+                <div class="text-muted small">Next unlock</div>
+                <div id="nextUnlockText" class="fw-semibold">—</div>
+              </div>
+            </div>
+            <div class="progress tier-progress" role="progressbar" aria-label="Tier progress" aria-valuemin="0" aria-valuemax="100">
+              <div id="tierProgressBar" class="progress-bar bg-success" style="width:0%"></div>
+            </div>
+            <div class="text-muted small mt-2" id="tierHintText">
+              Hit +200 tokens to bump your daily drain to 120. Every +100 after that unlocks +10 more (capped at 200).
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="col-6">
         <div class="card shadow-sm h-100">
           <div class="card-body">
@@ -73,6 +96,9 @@
             <div class="input-group">
               <input type="number" id="dailyDrainInput" class="form-control" min="0" value="100" />
               <button id="updateDrainBtn" class="btn btn-outline-secondary" type="button">Update</button>
+            </div>
+            <div class="text-muted small mt-2">
+              Floor: <span id="drainFloorText">110</span> (set by tier). Manual edits below the floor snap up.
             </div>
           </div>
         </div>
