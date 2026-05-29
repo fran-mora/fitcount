@@ -706,6 +706,29 @@
       let workoutLastPhase = null;
       let workoutLastBeepSec = -1;
       let workoutSetsDone = -1;
+      let workoutActive = false;
+      let wakeLockSentinel = null;
+
+      // Keep the screen awake while the workout is running. Uses the Screen Wake Lock API
+      // (iOS Safari ≥16.4, Chrome Android, Chrome desktop). Must be called inside a user
+      // gesture initially; the lock auto-releases on page hide and must be re-acquired on
+      // visibility return.
+      async function requestWakeLock() {
+        try {
+          if ("wakeLock" in navigator && !wakeLockSentinel) {
+            wakeLockSentinel = await navigator.wakeLock.request("screen");
+            wakeLockSentinel.addEventListener("release", () => { wakeLockSentinel = null; });
+          }
+        } catch (_) { wakeLockSentinel = null; }
+      }
+      async function releaseWakeLock() {
+        try {
+          if (wakeLockSentinel) { await wakeLockSentinel.release(); wakeLockSentinel = null; }
+        } catch (_) { wakeLockSentinel = null; }
+      }
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && workoutActive) requestWakeLock();
+      });
 
       const pad2 = (n) => String(n).padStart(2, "0");
       const fmtClock = (totalSec) => `${pad2(Math.floor(totalSec / 60))}:${pad2(totalSec % 60)}`;
@@ -714,6 +737,36 @@
 
       // ----- Audio cues (Web Audio; unlocked on the Start user gesture) -----
       let audioCtx = null;
+      let silentAudio = null;
+      // iPhone hardware silent switch mutes Web Audio. Playing an HTMLAudio element first
+      // (inside a user gesture) is the standard trick to flip the iOS audio session into
+      // "playback" mode so subsequent Web Audio output routes through the media channel.
+      function makeSilentWavDataUrl() {
+        const sr = 22050, samples = 220; // ~10ms of silence
+        const buf = new ArrayBuffer(44 + samples * 2);
+        const dv = new DataView(buf);
+        const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+        writeStr(0, "RIFF"); dv.setUint32(4, 36 + samples * 2, true);
+        writeStr(8, "WAVE"); writeStr(12, "fmt ");
+        dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+        dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
+        dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+        writeStr(36, "data"); dv.setUint32(40, samples * 2, true);
+        let bin = ""; const bytes = new Uint8Array(buf);
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return "data:audio/wav;base64," + btoa(bin);
+      }
+      function unlockAudioSession() {
+        try {
+          if (!silentAudio) {
+            silentAudio = new Audio(makeSilentWavDataUrl());
+            silentAudio.playsInline = true;
+            silentAudio.preload = "auto";
+          }
+          const p = silentAudio.play();
+          if (p && typeof p.catch === "function") p.catch(() => {});
+        } catch (_) { /* ignore */ }
+      }
       function ensureAudio() {
         try {
           const AC = window.AudioContext || window.webkitAudioContext;
@@ -731,12 +784,18 @@
         osc.type = "sine";
         osc.frequency.value = freq;
         gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(0.3, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.7, t + 0.01); // louder than the earlier 0.3
         gain.gain.exponentialRampToValueAtTime(0.0001, t + durationMs / 1000);
         osc.connect(gain).connect(audioCtx.destination);
         osc.start(t);
         osc.stop(t + durationMs / 1000 + 0.03);
       }
+      // Resume the Web Audio context if the page was backgrounded and came back.
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && audioCtx && audioCtx.state === "suspended") {
+          audioCtx.resume().catch(() => {});
+        }
+      });
 
       function renderSets(setsDone, currentSet) {
         if (setsDone === workoutSetsDone) return;
@@ -814,7 +873,10 @@
       }
 
       function startWorkout() {
+        unlockAudioSession(); // iOS silent-switch workaround (must precede first beep)
         ensureAudio();
+        requestWakeLock();
+        workoutActive = true;
         workoutLastPhase = null;
         workoutLastBeepSec = -1;
         workoutSetsDone = -1;
@@ -832,6 +894,8 @@
 
       function stopWorkout() {
         clearWorkoutTimers();
+        workoutActive = false;
+        releaseWakeLock();
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
         $workoutSummaryText.text(`You trained for ${fmtClock(totalSec)}`);
         $workoutPointsInput.val(suggestPoints(totalSec));
@@ -841,6 +905,8 @@
 
       function closeWorkout() {
         clearWorkoutTimers();
+        workoutActive = false;
+        releaseWakeLock();
         $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
       }
 
