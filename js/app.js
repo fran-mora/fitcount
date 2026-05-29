@@ -732,8 +732,42 @@
 
       const pad2 = (n) => String(n).padStart(2, "0");
       const fmtClock = (totalSec) => `${pad2(Math.floor(totalSec / 60))}:${pad2(totalSec % 60)}`;
-      // Each minute = 10 points; suggestion rounds up to the next whole minute.
-      const suggestPoints = (totalSec) => (totalSec <= 0 ? 0 : Math.ceil(totalSec / 60) * 10);
+
+      // Schedule walker. Each set is 30s work + 30s rest; after every 5th set there's an extra
+      // 30s bonus rest, and after every 10th set the bonus is 60s instead.
+      // Returns: { set, phase: 'work'|'rest'|'bonus_rest', secsLeft, setsDone, bonusTotal }.
+      function bonusAfterSet(n) {
+        if (n % 10 === 0) return 60;
+        if (n % 5 === 0) return 30;
+        return 0;
+      }
+      function workoutScheduleAt(totalSec) {
+        let t = 0, set = 1;
+        while (set < 1000) {
+          if (totalSec < t + 30) return { set, phase: "work", secsLeft: t + 30 - totalSec, setsDone: set - 1, bonusTotal: 0 };
+          t += 30;
+          if (totalSec < t + 30) return { set, phase: "rest", secsLeft: t + 30 - totalSec, setsDone: set - 1, bonusTotal: 0 };
+          t += 30;
+          const bonus = bonusAfterSet(set);
+          if (bonus > 0 && totalSec < t + bonus) return { set, phase: "bonus_rest", secsLeft: t + bonus - totalSec, setsDone: set, bonusTotal: bonus };
+          t += bonus;
+          set += 1;
+        }
+        return { set: 999, phase: "rest", secsLeft: 0, setsDone: 999, bonusTotal: 0 };
+      }
+      function nextPhaseAfter(st) {
+        if (st.phase === "work") return "rest";
+        if (st.phase === "rest") return bonusAfterSet(st.set) > 0 ? "bonus_rest" : "work";
+        return "work"; // bonus_rest → work
+      }
+      // 10 points per set; partial credit granted the moment a set's work begins (matches
+      // the prior "ceil(minutes) * 10" generosity). Bonus rest doesn't add points.
+      function suggestPointsFromState(totalSec, st) {
+        if (totalSec <= 0) return 0;
+        if (st.phase === "bonus_rest") return st.setsDone * 10;
+        return st.set * 10;
+      }
+      const suggestPoints = (totalSec) => suggestPointsFromState(totalSec, workoutScheduleAt(totalSec));
 
       // ----- Audio cues (HTMLAudio with baked-in WAV tones) -----
       // Web Audio API is silent in iOS Home-Screen standalone (WebClip) mode — a long-standing
@@ -804,7 +838,9 @@
         } catch (_) { /* ignore */ }
       }
 
-      function renderSets(setsDone, currentSet) {
+      // Renders only the completed-set badges; status text is set in tickWorkout because
+      // bonus rests need different wording.
+      function renderSets(setsDone) {
         if (setsDone === workoutSetsDone) return;
         workoutSetsDone = setsDone;
         let html = "";
@@ -813,38 +849,64 @@
           html += `<span class="${cls}">Set ${i} ✓</span>`;
         }
         $workoutSets.html(html);
-        $workoutSetStatus.text(setsDone > 0 ? `Set ${setsDone} done — now on Set ${currentSet}` : `Set ${currentSet} in progress`);
       }
 
       function tickWorkout() {
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
+        const st = workoutScheduleAt(totalSec);
         $workoutClock.text(fmtClock(totalSec));
 
-        const secInMin = totalSec % 60;
-        const inWork = secInMin < 30;
-        const phase = inWork ? "work" : "rest";
-
-        // Per-second audio cues: distinct palettes for the two transitions.
+        // Countdown ticks in the 3s leading into the next phase. Skip when the next phase is
+        // a bonus rest (no urgency to herald more rest).
         if (totalSec !== workoutLastBeepSec) {
           workoutLastBeepSec = totalSec;
-          if (secInMin === 27 || secInMin === 28 || secInMin === 29) playCue(cueRestTick);    // work ending → rest soon
-          else if (secInMin === 30) playCue(cueRestAccent);                                    // REST begins
-          else if (secInMin === 57 || secInMin === 58 || secInMin === 59) playCue(cueWorkTick); // rest ending → work soon
-          else if (secInMin === 0 && totalSec > 0) playCue(cueWorkAccent);                     // WORK begins (new set)
+          if (st.secsLeft >= 1 && st.secsLeft <= 3) {
+            const next = nextPhaseAfter(st);
+            if (next === "work") playCue(cueWorkTick);
+            else if (next === "rest") playCue(cueRestTick);
+            // bonus_rest as next: no tick
+          }
         }
 
-        if (phase !== workoutLastPhase) {
-          workoutLastPhase = phase;
-          if (navigator.vibrate) navigator.vibrate(inWork ? [120, 60, 120] : 80);
+        // Phase-entry accent + vibration. Bonus rest re-plays the rest accent so the user
+        // hears that something changed (and reads the BONUS REST label on screen).
+        if (st.phase !== workoutLastPhase) {
+          workoutLastPhase = st.phase;
+          if (st.phase === "work") {
+            playCue(cueWorkAccent);
+            if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+          } else if (st.phase === "rest") {
+            playCue(cueRestAccent);
+            if (navigator.vibrate) navigator.vibrate(80);
+          } else { // bonus_rest
+            playCue(cueRestAccent);
+            if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+          }
         }
 
-        const setsDone = Math.floor(totalSec / 60);
-        renderSets(setsDone, setsDone + 1);
+        renderSets(st.setsDone);
 
-        $workoutPhase.text(inWork ? "WORK" : "REST").removeClass("work rest").addClass(phase);
-        const phaseLeft = inWork ? 30 - secInMin : 60 - secInMin;
-        $workoutPhaseCountdown.text(inWork ? `${phaseLeft}s of work left` : `${phaseLeft}s rest — next set soon`);
-        $workoutLivePoints.text(suggestPoints(totalSec));
+        const phaseClass = st.phase === "work" ? "work" : "rest";
+        const phaseLabel = st.phase === "work" ? "WORK" : st.phase === "rest" ? "REST" : "BONUS REST";
+        $workoutPhase.text(phaseLabel).removeClass("work rest").addClass(phaseClass);
+
+        let countdownText;
+        if (st.phase === "work") countdownText = `${st.secsLeft}s of work left`;
+        else if (st.phase === "rest") countdownText = `${st.secsLeft}s rest — next set soon`;
+        else countdownText = `${st.secsLeft}s bonus rest`;
+        $workoutPhaseCountdown.text(countdownText);
+
+        let statusText;
+        if (st.phase === "bonus_rest") {
+          statusText = `Set ${st.set} done — ${st.bonusTotal}s bonus rest before Set ${st.set + 1}`;
+        } else if (st.setsDone > 0) {
+          statusText = `Set ${st.setsDone} done — now on Set ${st.set}`;
+        } else {
+          statusText = `Set ${st.set} in progress`;
+        }
+        $workoutSetStatus.text(statusText);
+
+        $workoutLivePoints.text(suggestPointsFromState(totalSec, st));
       }
 
       function beginTimer() {
@@ -884,7 +946,9 @@
         primeBeepAudio(); // iOS PWA: must play+pause inside the user gesture
         requestWakeLock();
         workoutActive = true;
-        workoutLastPhase = null;
+        // Seed lastPhase to 'work' so tickWorkout doesn't re-play the work accent at t=0;
+        // the preroll's GO accent already announced the first WORK.
+        workoutLastPhase = "work";
         workoutLastBeepSec = -1;
         workoutSetsDone = -1;
         $workoutReview.hide();
