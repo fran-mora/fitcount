@@ -819,15 +819,29 @@
         a.playsInline = true;
       });
 
-      // Inside the Start user gesture: play the silent unlock audio to (1) flip the iOS
-      // session category to "playback" and (2) register a user-initiated audio activity.
-      // After this, subsequent timer-fired .play() calls on the cue elements are allowed.
+      // Inside the Start user gesture, we have to do TWO things:
+      //   1. Flip the iOS audio session into "playback" mode (silentUnlockAudio).
+      //   2. Touch EVERY cue element with .play() so iOS allows later setInterval-fired
+      //      plays of them — without this, rest cues are silent because they're never
+      //      reached during the gesture (first one is 27 s into the workout).
+      // The muted play+pause cycle is the standard iOS unlock trick. The pause runs
+      // asynchronously after play()'s promise resolves; startWorkout adds a 300 ms delay
+      // before the first real beep so the prime cycle has time to settle.
       function primeBeepAudio() {
         try {
           silentUnlockAudio.currentTime = 0;
           const p = silentUnlockAudio.play();
           if (p && typeof p.catch === "function") p.catch(() => {});
         } catch (_) { /* ignore */ }
+        [cueWorkTick, cueWorkAccent, cueRestTick, cueRestAccent].forEach((a) => {
+          try {
+            a.muted = true;
+            const p = a.play();
+            const restore = () => { try { a.pause(); a.currentTime = 0; a.muted = false; } catch (_) {} };
+            if (p && typeof p.then === "function") p.then(restore).catch(restore);
+            else restore();
+          } catch (_) { a.muted = false; }
+        });
       }
 
       function playCue(audio) {
@@ -918,28 +932,34 @@
 
       function runPreroll(done) {
         // Pre-roll leads into WORK, so use the work-incoming palette.
-        let n = 3;
         $workoutPhase.text("GET READY").removeClass("rest").addClass("work");
         $workoutSetStatus.text("Starting…");
         $workoutMinuteText.text("10 reps per set · 30s work / 30s rest");
         $workoutPhaseCountdown.text("");
         $workoutSets.empty();
         $workoutLivePoints.text("0");
-        $workoutClock.text(String(n));
-        playCue(cueWorkTick);
-        workoutPreroll = setInterval(() => {
-          n -= 1;
-          if (n > 0) {
-            $workoutClock.text(String(n));
-            playCue(cueWorkTick);
-          } else {
-            clearInterval(workoutPreroll);
-            workoutPreroll = null;
-            $workoutClock.text("GO");
-            playCue(cueWorkAccent);
-            setTimeout(done, 450);
-          }
-        }, 1000);
+        $workoutClock.text("3");
+        // 300 ms warm-up before the first beep: lets iOS's audio engine spin up and the
+        // primeBeepAudio() play+pause cycles settle, so all three preroll ticks land at
+        // uniform 1 s spacing. Without this, the first beep is delayed by ~150 ms while
+        // ticks 2 and 3 are on time, making the 1→2 gap feel shorter than the 2→3 gap.
+        setTimeout(() => {
+          playCue(cueWorkTick);
+          let n = 3;
+          workoutPreroll = setInterval(() => {
+            n -= 1;
+            if (n > 0) {
+              $workoutClock.text(String(n));
+              playCue(cueWorkTick);
+            } else {
+              clearInterval(workoutPreroll);
+              workoutPreroll = null;
+              $workoutClock.text("GO");
+              playCue(cueWorkAccent);
+              setTimeout(done, 450);
+            }
+          }, 1000);
+        }, 300);
       }
 
       function startWorkout() {
