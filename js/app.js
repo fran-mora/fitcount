@@ -771,23 +771,24 @@
 
       const beepLowAudio  = new Audio(makeToneWavDataUrl(760, 180));   // countdown tick
       const beepHighAudio = new Audio(makeToneWavDataUrl(1100, 340));  // phase-change accent
-      [beepLowAudio, beepHighAudio].forEach((a) => {
+      // Separate silent unlock element so we never touch the beep elements before their
+      // first real play. Touching them in the gesture (e.g. play+pause) created a race that
+      // killed the very first "3" beep.
+      const silentUnlockAudio = new Audio(makeToneWavDataUrl(440, 10, 0)); // 10 ms of silence
+      [beepLowAudio, beepHighAudio, silentUnlockAudio].forEach((a) => {
         a.preload = "auto";
         a.playsInline = true;
       });
 
-      // Inside the Start user gesture: play+pause each tone muted so iOS will let timers
-      // trigger them later (subsequent .play() calls from setInterval are blocked otherwise).
+      // Inside the Start user gesture: play the silent unlock audio to (1) flip the iOS
+      // session category to "playback" and (2) register a user-initiated audio activity.
+      // After this, subsequent timer-fired .play() calls on the beep elements are allowed.
       function primeBeepAudio() {
-        [beepLowAudio, beepHighAudio].forEach((a) => {
-          try {
-            a.muted = true;
-            const p = a.play();
-            const restore = () => { try { a.pause(); a.currentTime = 0; a.muted = false; } catch (_) {} };
-            if (p && typeof p.then === "function") p.then(restore).catch(restore);
-            else restore();
-          } catch (_) { a.muted = false; }
-        });
+        try {
+          silentUnlockAudio.currentTime = 0;
+          const p = silentUnlockAudio.play();
+          if (p && typeof p.catch === "function") p.catch(() => {});
+        } catch (_) { /* ignore */ }
       }
 
       function beep(freq = 760) {
