@@ -181,10 +181,24 @@
     $rep10Btn.prop("disabled", false);
   }
 
+  function drainTierFor(daily_drain) {
+    const d = daily_drain || BASE_DRAIN;
+    return Math.max(0, Math.min(MAX_TIER, Math.round((d - BASE_DRAIN) / TIER_STEP)));
+  }
+
+  function applyTierColor(state) {
+    // Color follows max(balance-tier, drain-tier) so the accent never regresses once your
+    // drain has ratcheted up, even if today's drain pulls your balance below the threshold.
+    const colorTier = Math.max(tierFor(state.balance), drainTierFor(state.daily_drain));
+    document.documentElement.setAttribute("data-tier", String(colorTier));
+  }
+
   function renderTier(state) {
     const bal = state.balance;
     const tier = tierFor(bal);
     const floor = autoMinDrain(bal);
+
+    applyTierColor(state);
 
     $drainFloorText.text(floor);
     $dailyDrainInput.attr("min", floor);
@@ -192,7 +206,7 @@
     if (tier >= MAX_TIER) {
       $tierLabel.text(`Tier ${MAX_TIER} / ${MAX_TIER} — MAX (drain ${MAX_DRAIN})`);
       $nextUnlockText.text("Maxed out");
-      $tierProgressBar.css("width", "100%").removeClass("bg-success bg-primary").addClass("bg-success");
+      $tierProgressBar.css("width", "100%");
       $tierHintText.text(`Top tier reached. Daily drain is locked at the maximum of ${MAX_DRAIN}.`);
       $tierCard.addClass("tier-maxed");
       return;
@@ -210,7 +224,7 @@
 
     $tierLabel.text(`Tier ${tier} / ${MAX_TIER} — drain ${state.daily_drain}`);
     $nextUnlockText.text(`${nextAt} tokens → drain ${nextDrain} (${toGo} to go)`);
-    $tierProgressBar.css("width", pct + "%").removeClass("bg-success bg-primary").addClass("bg-primary");
+    $tierProgressBar.css("width", pct + "%");
     $tierHintText.text(`Reach ${nextAt} tokens to bump daily drain to ${nextDrain}.`);
   }
 
@@ -239,6 +253,9 @@
     const values = rows.map((r) => r.reps);
 
     const { textColor, gridColor } = getChartColors();
+    const tierRgb = (getComputedStyle(document.documentElement)
+      .getPropertyValue("--tier-color-rgb").trim()) || "13,110,253";
+    const barColor = `rgba(${tierRgb}, 0.6)`;
 
     if (repsChart) {
       repsChart.destroy();
@@ -252,7 +269,7 @@
           {
             label: "Reps",
             data: values,
-            backgroundColor: "rgba(13,110,253,0.6)",
+            backgroundColor: barColor,
             borderRadius: 2,
           },
         ],

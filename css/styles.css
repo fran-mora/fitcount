@@ -50,6 +50,19 @@ footer {
   padding-bottom: 0.5rem;
 }
 
+/* Tier color palette — driven by data-tier on <html>. */
+:root                       { --tier-color: #0d6efd; --tier-color-rgb: 13,110,253; }
+html[data-tier="0"]         { --tier-color: #0d6efd; --tier-color-rgb: 13,110,253; }  /* blue */
+html[data-tier="1"]         { --tier-color: #0dcaf0; --tier-color-rgb: 13,202,240; }  /* cyan */
+html[data-tier="2"]         { --tier-color: #20c997; --tier-color-rgb: 32,201,151; }  /* teal */
+html[data-tier="3"]         { --tier-color: #198754; --tier-color-rgb: 25,135,84;  }  /* green */
+html[data-tier="4"]         { --tier-color: #d39e00; --tier-color-rgb: 211,158,0;  }  /* amber */
+html[data-tier="5"]         { --tier-color: #fd7e14; --tier-color-rgb: 253,126,20; }  /* orange */
+html[data-tier="6"]         { --tier-color: #dc3545; --tier-color-rgb: 220,53,69;  }  /* red */
+html[data-tier="7"]         { --tier-color: #d63384; --tier-color-rgb: 214,51,132; }  /* pink */
+html[data-tier="8"]         { --tier-color: #6f42c1; --tier-color-rgb: 111,66,193; }  /* purple */
+html[data-tier="9"]         { --tier-color: #6610f2; --tier-color-rgb: 102,16,242; }  /* indigo — MAX */
+
 /* Tier progress */
 .tier-progress {
   height: 0.75rem;
@@ -57,19 +70,54 @@ footer {
   overflow: hidden;
 }
 .tier-card .progress-bar {
-  transition: width 600ms ease;
+  transition: width 600ms ease, background-color 600ms ease;
+}
+#tierProgressBar {
+  background-color: var(--tier-color) !important;
 }
 .tier-card.tier-maxed {
-  border-color: #198754;
-  box-shadow: 0 0 0 1px rgba(25, 135, 84, 0.35), 0 .125rem .25rem rgba(0,0,0,.075);
+  border-color: var(--tier-color);
+  box-shadow: 0 0 0 1px rgba(var(--tier-color-rgb), 0.35), 0 .125rem .25rem rgba(0,0,0,.075);
+}
+.tier-card:not(.tier-maxed) {
+  border-color: rgba(var(--tier-color-rgb), 0.35);
+  transition: border-color 600ms ease;
+}
+#tierLabel {
+  color: var(--tier-color);
+  transition: color 600ms ease;
 }
 .tier-bump-flash {
   animation: tier-flash 1.2s ease-in-out;
 }
 @keyframes tier-flash {
-  0%   { box-shadow: 0 0 0 0 rgba(25,135,84,0); }
-  30%  { box-shadow: 0 0 0 6px rgba(25,135,84,0.35); }
-  100% { box-shadow: 0 0 0 0 rgba(25,135,84,0); }
+  0%   { box-shadow: 0 0 0 0    rgba(var(--tier-color-rgb), 0); }
+  30%  { box-shadow: 0 0 0 8px  rgba(var(--tier-color-rgb), 0.45); }
+  100% { box-shadow: 0 0 0 0    rgba(var(--tier-color-rgb), 0); }
+}
+
+/* Primary buttons + badges follow the tier accent. .btn-success (Start workout) is left alone
+   so the CTA stays semantically green. */
+.btn-primary {
+  --bs-btn-bg: var(--tier-color);
+  --bs-btn-border-color: var(--tier-color);
+  --bs-btn-hover-bg: rgba(var(--tier-color-rgb), 0.88);
+  --bs-btn-hover-border-color: rgba(var(--tier-color-rgb), 0.88);
+  --bs-btn-active-bg: rgba(var(--tier-color-rgb), 0.8);
+  --bs-btn-active-border-color: rgba(var(--tier-color-rgb), 0.8);
+  --bs-btn-disabled-bg: var(--tier-color);
+  --bs-btn-disabled-border-color: var(--tier-color);
+}
+.btn-outline-primary {
+  --bs-btn-color: var(--tier-color);
+  --bs-btn-border-color: var(--tier-color);
+  --bs-btn-hover-bg: var(--tier-color);
+  --bs-btn-hover-border-color: var(--tier-color);
+  --bs-btn-active-bg: var(--tier-color);
+  --bs-btn-active-border-color: var(--tier-color);
+}
+.badge.bg-primary {
+  background-color: var(--tier-color) !important;
 }
 
 /* Interval workout overlay */
