@@ -735,14 +735,14 @@
       // Each minute = 10 points; suggestion rounds up to the next whole minute.
       const suggestPoints = (totalSec) => (totalSec <= 0 ? 0 : Math.ceil(totalSec / 60) * 10);
 
-      // ----- Audio cues (Web Audio; unlocked on the Start user gesture) -----
-      let audioCtx = null;
-      let silentAudio = null;
-      // iPhone hardware silent switch mutes Web Audio. Playing an HTMLAudio element first
-      // (inside a user gesture) is the standard trick to flip the iOS audio session into
-      // "playback" mode so subsequent Web Audio output routes through the media channel.
-      function makeSilentWavDataUrl() {
-        const sr = 22050, samples = 220; // ~10ms of silence
+      // ----- Audio cues (HTMLAudio with baked-in WAV tones) -----
+      // Web Audio API is silent in iOS Home-Screen standalone (WebClip) mode — a long-standing
+      // Safari bug. HTMLAudio with a real audio source routes through the iOS "media playback"
+      // session category, which works in both Safari and standalone PWA mode and ignores the
+      // hardware silent switch.
+      function makeToneWavDataUrl(freqHz, durationMs, peakGain = 0.75) {
+        const sr = 22050;
+        const samples = Math.max(1, Math.floor(sr * durationMs / 1000));
         const buf = new ArrayBuffer(44 + samples * 2);
         const dv = new DataView(buf);
         const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
@@ -752,50 +752,52 @@
         dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
         dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
         writeStr(36, "data"); dv.setUint32(40, samples * 2, true);
-        let bin = ""; const bytes = new Uint8Array(buf);
-        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        const attack  = Math.min(samples >> 1, Math.floor(sr * 0.008));
+        const release = Math.min(samples >> 1, Math.floor(sr * 0.04));
+        for (let i = 0; i < samples; i++) {
+          let env = 1;
+          if (i < attack) env = i / attack;
+          else if (i > samples - release) env = (samples - i) / release;
+          const s = Math.sin(2 * Math.PI * freqHz * i / sr) * env * peakGain;
+          dv.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(s * 32767))), true);
+        }
+        const bytes = new Uint8Array(buf);
+        let bin = ""; const CHUNK = 0x8000;
+        for (let off = 0; off < bytes.length; off += CHUNK) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(off, off + CHUNK));
+        }
         return "data:audio/wav;base64," + btoa(bin);
       }
-      function unlockAudioSession() {
+
+      const beepLowAudio  = new Audio(makeToneWavDataUrl(760, 180));   // countdown tick
+      const beepHighAudio = new Audio(makeToneWavDataUrl(1100, 340));  // phase-change accent
+      [beepLowAudio, beepHighAudio].forEach((a) => {
+        a.preload = "auto";
+        a.playsInline = true;
+      });
+
+      // Inside the Start user gesture: play+pause each tone muted so iOS will let timers
+      // trigger them later (subsequent .play() calls from setInterval are blocked otherwise).
+      function primeBeepAudio() {
+        [beepLowAudio, beepHighAudio].forEach((a) => {
+          try {
+            a.muted = true;
+            const p = a.play();
+            const restore = () => { try { a.pause(); a.currentTime = 0; a.muted = false; } catch (_) {} };
+            if (p && typeof p.then === "function") p.then(restore).catch(restore);
+            else restore();
+          } catch (_) { a.muted = false; }
+        });
+      }
+
+      function beep(freq = 760) {
+        const a = freq >= 1000 ? beepHighAudio : beepLowAudio;
         try {
-          if (!silentAudio) {
-            silentAudio = new Audio(makeSilentWavDataUrl());
-            silentAudio.playsInline = true;
-            silentAudio.preload = "auto";
-          }
-          const p = silentAudio.play();
+          a.currentTime = 0;
+          const p = a.play();
           if (p && typeof p.catch === "function") p.catch(() => {});
         } catch (_) { /* ignore */ }
       }
-      function ensureAudio() {
-        try {
-          const AC = window.AudioContext || window.webkitAudioContext;
-          if (!audioCtx && AC) audioCtx = new AC();
-          if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-        } catch (_) {
-          audioCtx = null;
-        }
-      }
-      function beep(freq = 760, durationMs = 160) {
-        if (!audioCtx) return;
-        const t = audioCtx.currentTime;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(0.7, t + 0.01); // louder than the earlier 0.3
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + durationMs / 1000);
-        osc.connect(gain).connect(audioCtx.destination);
-        osc.start(t);
-        osc.stop(t + durationMs / 1000 + 0.03);
-      }
-      // Resume the Web Audio context if the page was backgrounded and came back.
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && audioCtx && audioCtx.state === "suspended") {
-          audioCtx.resume().catch(() => {});
-        }
-      });
 
       function renderSets(setsDone, currentSet) {
         if (setsDone === workoutSetsDone) return;
@@ -873,8 +875,7 @@
       }
 
       function startWorkout() {
-        unlockAudioSession(); // iOS silent-switch workaround (must precede first beep)
-        ensureAudio();
+        primeBeepAudio(); // iOS PWA: must play+pause inside the user gesture
         requestWakeLock();
         workoutActive = true;
         workoutLastPhase = null;
