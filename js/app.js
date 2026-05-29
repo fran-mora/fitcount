@@ -769,20 +769,25 @@
         return "data:audio/wav;base64," + btoa(bin);
       }
 
-      const beepLowAudio  = new Audio(makeToneWavDataUrl(760, 180));   // countdown tick
-      const beepHighAudio = new Audio(makeToneWavDataUrl(1100, 340));  // phase-change accent
-      // Separate silent unlock element so we never touch the beep elements before their
+      // Two distinct cue palettes: brighter/urgent tones lead into WORK, mellower/calmer
+      // tones lead into REST. Each phase gets its own tick (3-2-1 countdown) and accent (the
+      // phase-change moment itself).
+      const cueWorkTick    = new Audio(makeToneWavDataUrl(920, 180));   // rest ending, work coming
+      const cueWorkAccent  = new Audio(makeToneWavDataUrl(1400, 340));  // WORK begins (new set)
+      const cueRestTick    = new Audio(makeToneWavDataUrl(620, 180));   // work ending, rest coming
+      const cueRestAccent  = new Audio(makeToneWavDataUrl(880, 340));   // REST begins
+      // Separate silent unlock element so we never touch the cue elements before their
       // first real play. Touching them in the gesture (e.g. play+pause) created a race that
-      // killed the very first "3" beep.
+      // killed the very first "3" beep in earlier versions.
       const silentUnlockAudio = new Audio(makeToneWavDataUrl(440, 10, 0)); // 10 ms of silence
-      [beepLowAudio, beepHighAudio, silentUnlockAudio].forEach((a) => {
+      [cueWorkTick, cueWorkAccent, cueRestTick, cueRestAccent, silentUnlockAudio].forEach((a) => {
         a.preload = "auto";
         a.playsInline = true;
       });
 
       // Inside the Start user gesture: play the silent unlock audio to (1) flip the iOS
       // session category to "playback" and (2) register a user-initiated audio activity.
-      // After this, subsequent timer-fired .play() calls on the beep elements are allowed.
+      // After this, subsequent timer-fired .play() calls on the cue elements are allowed.
       function primeBeepAudio() {
         try {
           silentUnlockAudio.currentTime = 0;
@@ -791,11 +796,10 @@
         } catch (_) { /* ignore */ }
       }
 
-      function beep(freq = 760) {
-        const a = freq >= 1000 ? beepHighAudio : beepLowAudio;
+      function playCue(audio) {
         try {
-          a.currentTime = 0;
-          const p = a.play();
+          audio.currentTime = 0;
+          const p = audio.play();
           if (p && typeof p.catch === "function") p.catch(() => {});
         } catch (_) { /* ignore */ }
       }
@@ -820,13 +824,13 @@
         const inWork = secInMin < 30;
         const phase = inWork ? "work" : "rest";
 
-        // Per-second audio cues: 3-2-1 leading into each 30s phase change, tone on switch.
+        // Per-second audio cues: distinct palettes for the two transitions.
         if (totalSec !== workoutLastBeepSec) {
           workoutLastBeepSec = totalSec;
-          if (secInMin === 27 || secInMin === 28 || secInMin === 29) beep(760, 150);        // work ending
-          else if (secInMin === 30) beep(1100, 320);                                         // rest begins
-          else if (secInMin === 57 || secInMin === 58 || secInMin === 59) beep(760, 150);    // rest ending
-          else if (secInMin === 0 && totalSec > 0) beep(1100, 320);                          // new set begins
+          if (secInMin === 27 || secInMin === 28 || secInMin === 29) playCue(cueRestTick);    // work ending → rest soon
+          else if (secInMin === 30) playCue(cueRestAccent);                                    // REST begins
+          else if (secInMin === 57 || secInMin === 58 || secInMin === 59) playCue(cueWorkTick); // rest ending → work soon
+          else if (secInMin === 0 && totalSec > 0) playCue(cueWorkAccent);                     // WORK begins (new set)
         }
 
         if (phase !== workoutLastPhase) {
@@ -851,6 +855,7 @@
       }
 
       function runPreroll(done) {
+        // Pre-roll leads into WORK, so use the work-incoming palette.
         let n = 3;
         $workoutPhase.text("GET READY").removeClass("rest").addClass("work");
         $workoutSetStatus.text("Starting…");
@@ -859,17 +864,17 @@
         $workoutSets.empty();
         $workoutLivePoints.text("0");
         $workoutClock.text(String(n));
-        beep(760, 180);
+        playCue(cueWorkTick);
         workoutPreroll = setInterval(() => {
           n -= 1;
           if (n > 0) {
             $workoutClock.text(String(n));
-            beep(760, 180);
+            playCue(cueWorkTick);
           } else {
             clearInterval(workoutPreroll);
             workoutPreroll = null;
             $workoutClock.text("GO");
-            beep(1100, 360);
+            playCue(cueWorkAccent);
             setTimeout(done, 450);
           }
         }, 1000);
