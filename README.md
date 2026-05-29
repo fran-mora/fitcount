@@ -306,9 +306,15 @@ Behaviour:
 A timer mode for "10 reps every minute, 30s work / 30s rest" sessions.
 
 - Tap **Start** (Interval Workout card) to open a full-screen timer overlay.
+  A 3-2-1 audio countdown plays first, then the timer begins.
 - The overlay shows elapsed time, a WORK/REST phase banner that flips every 30s
-  (with a haptic buzz on supported devices), the current minute, and a live
-  suggested-points readout.
+  (with a haptic buzz on supported devices), the current set, completed-set
+  badges, and a live suggested-points readout.
+- **Audio cues**: a 3-2-1 beep plays in the last 3 seconds before every phase
+  change (work→rest and rest→work), with a higher tone on the switch itself, so
+  you can pace the session without looking at the phone.
+- **Sets**: each minute is one set. Completed sets accumulate as "Set N ✓"
+  badges, and the status line shows which set is in progress.
 - Tap **Stop** when done. Suggested points = `ceil(elapsed_minutes) * 10`
   (each minute = 10 reps/points, rounded up to the next whole minute).
 - Edit the number if you did fewer/more, then **Confirm** to add it to the daily

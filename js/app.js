@@ -672,8 +672,10 @@
       const $workoutReview = $("#workoutReview");
       const $workoutClock = $("#workoutClock");
       const $workoutPhase = $("#workoutPhase");
+      const $workoutSetStatus = $("#workoutSetStatus");
       const $workoutMinuteText = $("#workoutMinuteText");
       const $workoutPhaseCountdown = $("#workoutPhaseCountdown");
+      const $workoutSets = $("#workoutSets");
       const $workoutLivePoints = $("#workoutLivePoints");
       const $workoutStopBtn = $("#workoutStopBtn");
       const $workoutSummaryText = $("#workoutSummaryText");
@@ -682,47 +684,137 @@
       const $workoutDiscardBtn = $("#workoutDiscardBtn");
 
       let workoutInterval = null;
+      let workoutPreroll = null;
       let workoutStartMs = 0;
       let workoutLastPhase = null;
+      let workoutLastBeepSec = -1;
+      let workoutSetsDone = -1;
 
       const pad2 = (n) => String(n).padStart(2, "0");
       const fmtClock = (totalSec) => `${pad2(Math.floor(totalSec / 60))}:${pad2(totalSec % 60)}`;
       // Each minute = 10 points; suggestion rounds up to the next whole minute.
       const suggestPoints = (totalSec) => (totalSec <= 0 ? 0 : Math.ceil(totalSec / 60) * 10);
 
+      // ----- Audio cues (Web Audio; unlocked on the Start user gesture) -----
+      let audioCtx = null;
+      function ensureAudio() {
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!audioCtx && AC) audioCtx = new AC();
+          if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+        } catch (_) {
+          audioCtx = null;
+        }
+      }
+      function beep(freq = 760, durationMs = 160) {
+        if (!audioCtx) return;
+        const t = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.3, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + durationMs / 1000);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + durationMs / 1000 + 0.03);
+      }
+
+      function renderSets(setsDone, currentSet) {
+        if (setsDone === workoutSetsDone) return;
+        workoutSetsDone = setsDone;
+        let html = "";
+        for (let i = 1; i <= setsDone; i++) {
+          const cls = i === setsDone ? "badge text-bg-success me-1 mb-1 workout-set-new" : "badge text-bg-success me-1 mb-1";
+          html += `<span class="${cls}">Set ${i} ✓</span>`;
+        }
+        $workoutSets.html(html);
+        $workoutSetStatus.text(setsDone > 0 ? `Set ${setsDone} done — now on Set ${currentSet}` : `Set ${currentSet} in progress`);
+      }
+
       function tickWorkout() {
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
         $workoutClock.text(fmtClock(totalSec));
 
-        const minute = Math.floor(totalSec / 60) + 1;
         const secInMin = totalSec % 60;
         const inWork = secInMin < 30;
         const phase = inWork ? "work" : "rest";
+
+        // Per-second audio cues: 3-2-1 leading into each 30s phase change, tone on switch.
+        if (totalSec !== workoutLastBeepSec) {
+          workoutLastBeepSec = totalSec;
+          if (secInMin === 27 || secInMin === 28 || secInMin === 29) beep(760, 150);        // work ending
+          else if (secInMin === 30) beep(1100, 320);                                         // rest begins
+          else if (secInMin === 57 || secInMin === 58 || secInMin === 59) beep(760, 150);    // rest ending
+          else if (secInMin === 0 && totalSec > 0) beep(1100, 320);                          // new set begins
+        }
 
         if (phase !== workoutLastPhase) {
           workoutLastPhase = phase;
           if (navigator.vibrate) navigator.vibrate(inWork ? [120, 60, 120] : 80);
         }
 
+        const setsDone = Math.floor(totalSec / 60);
+        renderSets(setsDone, setsDone + 1);
+
         $workoutPhase.text(inWork ? "WORK" : "REST").removeClass("work rest").addClass(phase);
-        $workoutMinuteText.text(`Minute ${minute} · do 10 reps`);
         const phaseLeft = inWork ? 30 - secInMin : 60 - secInMin;
         $workoutPhaseCountdown.text(inWork ? `${phaseLeft}s of work left` : `${phaseLeft}s rest — next set soon`);
         $workoutLivePoints.text(suggestPoints(totalSec));
       }
 
-      function startWorkout() {
+      function beginTimer() {
         workoutStartMs = Date.now();
+        $workoutStopBtn.prop("disabled", false);
+        tickWorkout();
+        workoutInterval = setInterval(tickWorkout, 200);
+      }
+
+      function runPreroll(done) {
+        let n = 3;
+        $workoutPhase.text("GET READY").removeClass("rest").addClass("work");
+        $workoutSetStatus.text("Starting…");
+        $workoutMinuteText.text("10 reps per set · 30s work / 30s rest");
+        $workoutPhaseCountdown.text("");
+        $workoutSets.empty();
+        $workoutLivePoints.text("0");
+        $workoutClock.text(String(n));
+        beep(760, 180);
+        workoutPreroll = setInterval(() => {
+          n -= 1;
+          if (n > 0) {
+            $workoutClock.text(String(n));
+            beep(760, 180);
+          } else {
+            clearInterval(workoutPreroll);
+            workoutPreroll = null;
+            $workoutClock.text("GO");
+            beep(1100, 360);
+            setTimeout(done, 450);
+          }
+        }, 1000);
+      }
+
+      function startWorkout() {
+        ensureAudio();
         workoutLastPhase = null;
+        workoutLastBeepSec = -1;
+        workoutSetsDone = -1;
         $workoutReview.hide();
         $workoutRunning.show();
         $workoutOverlay.addClass("show").attr("aria-hidden", "false");
-        tickWorkout();
-        workoutInterval = setInterval(tickWorkout, 250);
+        $workoutStopBtn.prop("disabled", true);
+        runPreroll(beginTimer);
+      }
+
+      function clearWorkoutTimers() {
+        if (workoutInterval) { clearInterval(workoutInterval); workoutInterval = null; }
+        if (workoutPreroll) { clearInterval(workoutPreroll); workoutPreroll = null; }
       }
 
       function stopWorkout() {
-        if (workoutInterval) { clearInterval(workoutInterval); workoutInterval = null; }
+        clearWorkoutTimers();
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
         $workoutSummaryText.text(`You trained for ${fmtClock(totalSec)}`);
         $workoutPointsInput.val(suggestPoints(totalSec));
@@ -731,7 +823,7 @@
       }
 
       function closeWorkout() {
-        if (workoutInterval) { clearInterval(workoutInterval); workoutInterval = null; }
+        clearWorkoutTimers();
         $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
       }
 

@@ -107,6 +107,20 @@ footer {
 .workout-phasecountdown { font-size: 1rem; margin-top: .25rem; opacity: .8; }
 .workout-points { font-size: 1.1rem; margin-top: 1rem; }
 .workout-points-input { max-width: 200px; margin: 0 auto; font-weight: 700; }
+.workout-sets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .25rem;
+  min-height: 1.6rem;
+}
+.workout-sets .badge { font-size: .8rem; }
+.workout-set-new { animation: set-pop .5s ease; }
+@keyframes set-pop {
+  0%   { transform: scale(.6); opacity: 0; }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
 @media (max-width: 576px) {
   .workout-clock { font-size: 4rem; }
 }
