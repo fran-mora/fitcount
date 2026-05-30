@@ -685,6 +685,10 @@
       // ===== Interval workout (10 reps/min, 30s work / 30s rest) =====
       const $startWorkoutBtn = $("#startWorkoutBtn");
       const $workoutOverlay = $("#workoutOverlay");
+      const $workoutSetup = $("#workoutSetup");
+      const $workoutWarmupInput = $("#workoutWarmupInput");
+      const $workoutGoBtn = $("#workoutGoBtn");
+      const $workoutSetupCancelBtn = $("#workoutSetupCancelBtn");
       const $workoutRunning = $("#workoutRunning");
       const $workoutReview = $("#workoutReview");
       const $workoutClock = $("#workoutClock");
@@ -702,12 +706,26 @@
 
       let workoutInterval = null;
       let workoutPreroll = null;
+      let workoutWarmupInterval = null;
       let workoutStartMs = 0;
       let workoutLastPhase = null;
       let workoutLastBeepSec = -1;
       let workoutSetsDone = -1;
       let workoutActive = false;
+      let workoutInWarmup = false;
       let wakeLockSentinel = null;
+
+      const WARMUP_LS_KEY = "fitcount.warmupMinutes";
+      function getStoredWarmupMinutes() {
+        try {
+          const v = parseInt(localStorage.getItem(WARMUP_LS_KEY) || "2", 10);
+          if (isNaN(v) || v < 0 || v > 30) return 2;
+          return v;
+        } catch (_) { return 2; }
+      }
+      function storeWarmupMinutes(v) {
+        try { localStorage.setItem(WARMUP_LS_KEY, String(v)); } catch (_) {}
+      }
 
       // Keep the screen awake while the workout is running. Uses the Screen Wake Lock API
       // (iOS Safari ≥16.4, Chrome Android, Chrome desktop). Must be called inside a user
@@ -962,31 +980,64 @@
         }, 300);
       }
 
-      function startWorkout() {
-        primeBeepAudio(); // iOS PWA: must play+pause inside the user gesture
-        requestWakeLock();
-        workoutActive = true;
-        // Seed lastPhase to 'work' so tickWorkout doesn't re-play the work accent at t=0;
-        // the preroll's GO accent already announced the first WORK.
-        workoutLastPhase = "work";
+      // Warm-up before the workout. Counts down silently; the preroll's 3-2-1-GO
+      // gives the audible transition into the first WORK. No points accrue during warm-up.
+      function runWarmup(minutes, done) {
+        const totalSec = minutes * 60;
+        const startMs = Date.now();
+        workoutInWarmup = true;
         workoutLastBeepSec = -1;
-        workoutSetsDone = -1;
-        $workoutReview.hide();
+        $workoutSetup.hide();
         $workoutRunning.show();
+        $workoutPhase.text("WARM-UP").removeClass("work").addClass("rest");
+        $workoutSetStatus.text("Warm-up — no points");
+        $workoutMinuteText.text(`${minutes} min warm-up · workout starts after`);
+        $workoutPhaseCountdown.text("");
+        $workoutSets.empty();
+        $workoutLivePoints.text("0");
+        $workoutStopBtn.prop("disabled", false);
+        const tick = () => {
+          const elapsed = Math.floor((Date.now() - startMs) / 1000);
+          const left = Math.max(0, totalSec - elapsed);
+          $workoutClock.text(fmtClock(left));
+          $workoutPhaseCountdown.text(left === 0 ? "Workout starting…" : `${left}s of warm-up left`);
+          if (left <= 0) {
+            clearInterval(workoutWarmupInterval); workoutWarmupInterval = null;
+            workoutInWarmup = false;
+            $workoutStopBtn.prop("disabled", true);
+            done();
+          }
+        };
+        tick();
+        workoutWarmupInterval = setInterval(tick, 200);
+      }
+
+      // Click on the top-level Start button: just open the overlay on the Setup panel.
+      // Audio prime + wake lock happen on the Go-button gesture so iOS unlocks correctly.
+      function startWorkout() {
+        $workoutWarmupInput.val(getStoredWarmupMinutes());
+        $workoutReview.hide();
+        $workoutRunning.hide();
+        $workoutSetup.show();
         $workoutOverlay.addClass("show").attr("aria-hidden", "false");
-        $workoutStopBtn.prop("disabled", true);
-        runPreroll(beginTimer);
       }
 
       function clearWorkoutTimers() {
         if (workoutInterval) { clearInterval(workoutInterval); workoutInterval = null; }
         if (workoutPreroll) { clearInterval(workoutPreroll); workoutPreroll = null; }
+        if (workoutWarmupInterval) { clearInterval(workoutWarmupInterval); workoutWarmupInterval = null; }
       }
 
       function stopWorkout() {
         clearWorkoutTimers();
         workoutActive = false;
         releaseWakeLock();
+        // Stop pressed during warm-up: no workout happened, no review screen.
+        if (workoutInWarmup) {
+          workoutInWarmup = false;
+          $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
+          return;
+        }
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
         $workoutSummaryText.text(`You trained for ${fmtClock(totalSec)}`);
         $workoutPointsInput.val(suggestPoints(totalSec));
@@ -997,11 +1048,33 @@
       function closeWorkout() {
         clearWorkoutTimers();
         workoutActive = false;
+        workoutInWarmup = false;
         releaseWakeLock();
         $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
       }
 
       $startWorkoutBtn.prop("disabled", false).off("click").on("click", startWorkout);
+      $workoutGoBtn.off("click").on("click", () => {
+        const raw = parseInt($workoutWarmupInput.val(), 10);
+        const minutes = Math.max(0, Math.min(30, isNaN(raw) ? 0 : raw));
+        storeWarmupMinutes(minutes);
+        primeBeepAudio(); // iOS PWA: must play+pause inside the user gesture
+        requestWakeLock();
+        workoutActive = true;
+        // Seed lastPhase to 'work' so tickWorkout doesn't re-play the work accent at t=0.
+        workoutLastPhase = "work";
+        workoutLastBeepSec = -1;
+        workoutSetsDone = -1;
+        $workoutStopBtn.prop("disabled", true);
+        if (minutes > 0) {
+          runWarmup(minutes, () => runPreroll(beginTimer));
+        } else {
+          $workoutSetup.hide();
+          $workoutRunning.show();
+          runPreroll(beginTimer);
+        }
+      });
+      $workoutSetupCancelBtn.off("click").on("click", closeWorkout);
       $workoutStopBtn.off("click").on("click", stopWorkout);
       $workoutDiscardBtn.off("click").on("click", closeWorkout);
       $workoutConfirmBtn.off("click").on("click", async () => {
