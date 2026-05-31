@@ -195,7 +195,9 @@
 
   function renderTier(state) {
     const bal = state.balance;
-    const tier = tierFor(bal);
+    // Tier is driven by daily_drain (the ratcheted, authoritative source). Balance is
+    // the progress meter toward the next tier-up; it gets reset to 0 on every tier-up.
+    const tier = drainTierFor(state.daily_drain);
     const floor = autoMinDrain(bal);
 
     applyTierColor(state);
@@ -216,20 +218,18 @@
 
     const nextTier = tier + 1;
     const nextDrain = BASE_DRAIN + nextTier * TIER_STEP;
-    const nextAt = thresholdForTier(nextTier);
-    const prevAt = tier === 0 ? 0 : thresholdForTier(tier);
-    const span = Math.max(1, nextAt - prevAt);
-    const pct = Math.max(0, Math.min(100, ((bal - prevAt) / span) * 100));
+    const nextAt = thresholdForTier(nextTier); // absolute balance needed (grind from 0)
+    const pct = Math.max(0, Math.min(100, (bal / nextAt) * 100));
     const toGo = Math.max(0, nextAt - bal);
 
     $tierLabel.text(`Tier ${tier} / ${MAX_TIER} — drain ${state.daily_drain}`);
     $nextUnlockText.text(`${nextAt} tokens → drain ${nextDrain} (${toGo} to go)`);
     $tierProgressBar.css("width", pct + "%");
-    $tierHintText.text(`Reach ${nextAt} tokens to bump daily drain to ${nextDrain}.`);
+    $tierHintText.text(`Reach ${nextAt} tokens to bump drain to ${nextDrain} — balance resets to 0.`);
   }
 
   function flashTierCelebration(oldDrain, newDrain) {
-    showAlert(`🎉 Tier up! Daily drain promoted from ${oldDrain} to ${newDrain}.`, "success");
+    showAlert(`🎉 Tier up! Drain ${oldDrain} → ${newDrain}. Balance reset to 0 — grind on.`, "success");
     setTimeout(hideAlert, 4000);
     $tierCard.addClass("tier-bump-flash");
     setTimeout(() => $tierCard.removeClass("tier-bump-flash"), 1300);
@@ -613,9 +613,11 @@
     if (floor <= (state.daily_drain || 0)) return state;
 
     const oldDrain = state.daily_drain;
+    // Tier-up moment: bump the drain AND reset balance to 0 so the user has to grind
+    // back up to the next threshold (progressively harder — game-like progression).
     const { data: updated, error } = await supabase
       .from("fit_state")
-      .update({ daily_drain: floor })
+      .update({ daily_drain: floor, balance: 0 })
       .eq("id", "singleton")
       .select("*")
       .single();
