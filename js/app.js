@@ -229,7 +229,7 @@
   }
 
   function flashTierCelebration(oldDrain, newDrain) {
-    showAlert(`🎉 Tier up! Drain ${oldDrain} → ${newDrain}. Balance reset to 0 — grind on.`, "success");
+    showAlert(`🎉 Tier up! Drain ${oldDrain} → ${newDrain}. Threshold deducted — grind on.`, "success");
     setTimeout(hideAlert, 4000);
     $tierCard.addClass("tier-bump-flash");
     setTimeout(() => $tierCard.removeClass("tier-bump-flash"), 1300);
@@ -613,11 +613,17 @@
     if (floor <= (state.daily_drain || 0)) return state;
 
     const oldDrain = state.daily_drain;
-    // Tier-up moment: bump the drain AND reset balance to 0 so the user has to grind
-    // back up to the next threshold (progressively harder — game-like progression).
+    // Tier-up: deduct the threshold of the new tier from balance so any overflow
+    // carries through (e.g., reaching balance 250 with tier-1 threshold=200 leaves 50).
+    // Skipping multiple tiers in one increment is handled correctly because
+    // thresholdForTier(N) equals the cumulative cost from 0 to tier N.
+    const newDrainTier = Math.round((floor - BASE_DRAIN) / TIER_STEP);
+    const threshold = thresholdForTier(newDrainTier);
+    const newBalance = Math.max(0, state.balance - threshold);
+
     const { data: updated, error } = await supabase
       .from("fit_state")
-      .update({ daily_drain: floor, balance: 0 })
+      .update({ daily_drain: floor, balance: newBalance })
       .eq("id", "singleton")
       .select("*")
       .single();
