@@ -772,7 +772,8 @@
         while (set < 1000) {
           if (totalSec < t + 30) return { set, phase: "work", secsLeft: t + 30 - totalSec, setsDone: set - 1, bonusTotal: 0 };
           t += 30;
-          if (totalSec < t + 30) return { set, phase: "rest", secsLeft: t + 30 - totalSec, setsDone: set - 1, bonusTotal: 0 };
+          // Badge for set N appears as soon as its work phase ends — so setsDone=set during rest.
+          if (totalSec < t + 30) return { set, phase: "rest", secsLeft: t + 30 - totalSec, setsDone: set, bonusTotal: 0 };
           t += 30;
           const bonus = bonusAfterSet(set);
           if (bonus > 0 && totalSec < t + bonus) return { set, phase: "bonus_rest", secsLeft: t + bonus - totalSec, setsDone: set, bonusTotal: bonus };
@@ -939,6 +940,8 @@
         let statusText;
         if (st.phase === "bonus_rest") {
           statusText = `Set ${st.set} done — ${st.bonusTotal}s bonus rest before Set ${st.set + 1}`;
+        } else if (st.phase === "rest") {
+          statusText = `Set ${st.set} done — resting`;
         } else if (st.setsDone > 0) {
           statusText = `Set ${st.setsDone} done — now on Set ${st.set}`;
         } else {
