@@ -153,6 +153,7 @@ html[data-tier="9"]         { --tier-color: #6610f2; --tier-color-rgb: 102,16,24
 }
 .workout-sub { font-size: 1.1rem; margin-top: .5rem; }
 .workout-phasecountdown { font-size: 1rem; margin-top: .25rem; opacity: .8; }
+.workout-extrarest { font-size: 1.5rem; font-weight: 700; color: #ffc107; }
 .workout-points { font-size: 1.1rem; margin-top: 1rem; }
 .workout-points-input { max-width: 200px; margin: 0 auto; font-weight: 700; }
 .workout-sets {

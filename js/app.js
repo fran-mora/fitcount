@@ -707,6 +707,8 @@
       const $workoutSets = $("#workoutSets");
       const $workoutLivePoints = $("#workoutLivePoints");
       const $workoutStopBtn = $("#workoutStopBtn");
+      const $workoutAddRestBtn = $("#workoutAddRestBtn");
+      const $workoutExtraRest = $("#workoutExtraRest");
       const $workoutSummaryText = $("#workoutSummaryText");
       const $workoutPointsInput = $("#workoutPointsInput");
       const $workoutConfirmBtn = $("#workoutConfirmBtn");
@@ -722,6 +724,18 @@
       let workoutActive = false;
       let workoutInWarmup = false;
       let wakeLockSentinel = null;
+      // Extra-rest pause: while extraRestEndsMs > 0 the main clock is frozen and a secondary
+      // countdown ticks down. extraRestStartedMs marks when the current pause began; on pause
+      // end we shift workoutStartMs forward by (end - start) so the main clock resumes exactly
+      // where it was. Subsequent +15 clicks while paused just extend extraRestEndsMs.
+      let extraRestEndsMs = 0;
+      let extraRestStartedMs = 0;
+
+      function resetExtraRest() {
+        extraRestEndsMs = 0;
+        extraRestStartedMs = 0;
+        $workoutExtraRest.hide().text("");
+      }
 
       const WARMUP_LS_KEY = "fitcount.warmupMinutes";
       function getStoredWarmupMinutes() {
@@ -893,6 +907,23 @@
       }
 
       function tickWorkout() {
+        // Extra-rest pause: freeze the main clock and show a secondary countdown.
+        if (extraRestEndsMs > 0) {
+          const now = Date.now();
+          const msLeft = extraRestEndsMs - now;
+          if (msLeft > 0) {
+            $workoutExtraRest.show().text(`+${Math.ceil(msLeft / 1000)}s extra rest`);
+            return;
+          }
+          // Pause finished: shift workoutStartMs forward by the pause duration so the main
+          // clock picks up exactly where it left off, then fall through to normal rendering.
+          workoutStartMs += (now - extraRestStartedMs);
+          extraRestEndsMs = 0;
+          extraRestStartedMs = 0;
+          $workoutExtraRest.hide().text("");
+          playCue(cueWorkTick);
+          if (navigator.vibrate) navigator.vibrate(60);
+        }
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
         const st = workoutScheduleAt(totalSec);
         $workoutClock.text(fmtClock(totalSec));
@@ -955,6 +986,7 @@
       function beginTimer() {
         workoutStartMs = Date.now();
         $workoutStopBtn.prop("disabled", false);
+        $workoutAddRestBtn.show();
         tickWorkout();
         workoutInterval = setInterval(tickWorkout, 200);
       }
@@ -1043,13 +1075,19 @@
         clearWorkoutTimers();
         workoutActive = false;
         releaseWakeLock();
+        $workoutAddRestBtn.hide();
         // Stop pressed during warm-up: no workout happened, no review screen.
         if (workoutInWarmup) {
           workoutInWarmup = false;
+          resetExtraRest();
           $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
           return;
         }
-        const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
+        // Stop pressed mid-extra-rest: exclude the in-progress paused span from training time.
+        let effectiveNow = Date.now();
+        if (extraRestEndsMs > 0) effectiveNow -= (Date.now() - extraRestStartedMs);
+        resetExtraRest();
+        const totalSec = Math.max(0, Math.floor((effectiveNow - workoutStartMs) / 1000));
         $workoutSummaryText.text(`You trained for ${fmtClock(totalSec)}`);
         $workoutPointsInput.val(suggestPoints(totalSec));
         $workoutRunning.hide();
@@ -1060,9 +1098,26 @@
         clearWorkoutTimers();
         workoutActive = false;
         workoutInWarmup = false;
+        resetExtraRest();
+        $workoutAddRestBtn.hide();
         releaseWakeLock();
         $workoutOverlay.removeClass("show").attr("aria-hidden", "true");
       }
+
+      $workoutAddRestBtn.off("click").on("click", () => {
+        if (!workoutActive || workoutInWarmup) return;
+        const now = Date.now();
+        if (extraRestEndsMs <= now) {
+          extraRestStartedMs = now;
+          extraRestEndsMs = now + 15000;
+        } else {
+          extraRestEndsMs += 15000;
+        }
+        const secsLeft = Math.ceil((extraRestEndsMs - Date.now()) / 1000);
+        $workoutExtraRest.show().text(`+${secsLeft}s extra rest`);
+        playCue(cueRestTick);
+        if (navigator.vibrate) navigator.vibrate(40);
+      });
 
       $startWorkoutBtn.prop("disabled", false).off("click").on("click", startWorkout);
       $workoutGoBtn.off("click").on("click", () => {
