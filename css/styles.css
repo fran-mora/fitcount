@@ -191,3 +191,63 @@ html[data-tier="9"]         { --tier-color: #6610f2; --tier-color-rgb: 102,16,24
     height: 180px; /* smaller height on phones */
   }
 }
+
+/* ===== Auth gate ===== */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bs-body-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 2000;
+}
+.auth-inner {
+  width: 100%;
+  max-width: 360px;
+}
+
+/* ===== Progress photos ===== */
+.photos-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.photos-strip .photo-thumb {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  border: 1px solid rgba(0,0,0,0.1);
+}
+.photo-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1900;
+}
+.photo-modal.show { display: flex; }
+.photo-modal-inner {
+  max-width: 95vw;
+  max-height: 95vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.photo-modal-inner img {
+  max-width: 100%;
+  max-height: 75vh;
+  border-radius: 0.5rem;
+}
+.photo-modal-meta {
+  color: #fff;
+  font-size: 0.95rem;
+  text-align: center;
+}

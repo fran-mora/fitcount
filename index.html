@@ -35,7 +35,30 @@
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body class="bg-body">
-  <div class="container py-4">
+  <!-- Auth gate: shown until a Supabase session exists. Blocks all app UI. -->
+  <div id="authOverlay" class="auth-overlay" aria-hidden="true">
+    <div class="auth-inner">
+      <h1 class="h4 fw-bold text-center mb-3">FitCount</h1>
+      <p class="text-muted text-center small mb-3">Sign in to continue</p>
+      <form id="authForm">
+        <div class="mb-2">
+          <label class="form-label small" for="authEmailInput">Email</label>
+          <input type="email" id="authEmailInput" class="form-control" autocomplete="username" required />
+        </div>
+        <div class="mb-3">
+          <label class="form-label small" for="authPasswordInput">Password</label>
+          <input type="password" id="authPasswordInput" class="form-control" autocomplete="current-password" required />
+        </div>
+        <div id="authError" class="alert alert-danger py-2 px-3 small mb-2" style="display:none;"></div>
+        <button id="authSubmitBtn" type="submit" class="btn btn-primary w-100">Sign in</button>
+      </form>
+      <div class="text-muted small text-center mt-3">
+        Sessions persist on this device — you should only need to sign in once.
+      </div>
+    </div>
+  </div>
+
+  <div id="appRoot" class="container py-4" style="display:none;">
     <header class="mb-4 text-center">
       <h1 class="h3 fw-bold">FitCount</h1>
       <div class="text-muted small">
@@ -195,8 +218,42 @@
       </div>
     </div>
 
+    <!-- Progress Photos -->
+    <div class="row g-3 mt-1">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <div class="text-muted small">Progress Photos</div>
+              <label for="photoFileInput" class="btn btn-sm btn-outline-primary mb-0" role="button">+ Photo</label>
+              <input type="file" id="photoFileInput" accept="image/*" capture="user" style="display:none;" />
+            </div>
+            <div id="photosUploading" class="text-muted small text-center py-2" style="display:none;">Uploading…</div>
+            <div id="photosStrip" class="photos-strip">
+              <div class="text-muted small text-center py-2">No photos yet — snap one to start tracking shape vs. drain over time.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Photo viewer modal -->
+    <div id="photoModal" class="photo-modal" aria-hidden="true">
+      <div class="photo-modal-inner">
+        <img id="photoModalImg" alt="Progress photo" />
+        <div id="photoModalMeta" class="photo-modal-meta"></div>
+        <div class="photo-modal-actions d-flex gap-2 justify-content-center mt-2">
+          <button id="photoDeleteBtn" class="btn btn-sm btn-outline-danger">Delete</button>
+          <button id="photoCloseBtn" class="btn btn-sm btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
     <footer class="text-center mt-4 text-muted small">
-      Daily drain: tokens are removed automatically each day. Add tokens by doing reps (+1 each).
+      <div>Daily drain: tokens are removed automatically each day. Add tokens by doing reps (+1 each).</div>
+      <div class="mt-2">
+        <a href="#" id="signOutLink" class="text-muted">Sign out</a>
+      </div>
     </footer>
   </div>
 

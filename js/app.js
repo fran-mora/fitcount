@@ -14,7 +14,11 @@
   const SUPABASE_URL = "https://mhjtmzwanpdtbxnhhscn.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1oanRtendhbnBkdGJ4bmhoc2NuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk0NzE4NjEsImV4cCI6MjA3NTA0Nzg2MX0.M1T2lzqxMIFmfFO3iYR19GRrVVKxSDKxtLwDLvwzN4o";
 
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // persistSession + autoRefreshToken are on by default; spelled out for clarity. The
+  // localStorage-backed session means a Home Screen PWA stays signed in indefinitely.
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, storage: window.localStorage }
+  });
 
   // ====== DOM elements ======
   const $todayText = $("#todayText");
@@ -637,6 +641,167 @@
     return updated;
   }
 
+  // ====== Progress photos ======
+  // Photos live in private Supabase Storage bucket "fit-photos"; metadata (created_at,
+  // balance, daily_drain, storage_path) lives in table public.fit_photos. RLS gates both.
+  const PHOTO_BUCKET = "fit-photos";
+  const PHOTO_MAX_DIM = 1024;
+  const PHOTO_JPEG_QUALITY = 0.7;
+
+  // Resize an uploaded image to fit within MAX_DIM x MAX_DIM, return a JPEG Blob.
+  function resizePhotoFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Failed to decode image"));
+        img.onload = () => {
+          let { width, height } = img;
+          const scale = Math.min(1, PHOTO_MAX_DIM / Math.max(width, height));
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => blob ? resolve(blob) : reject(new Error("Canvas encode failed")),
+            "image/jpeg",
+            PHOTO_JPEG_QUALITY
+          );
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Resolve a stored object to a short-lived signed URL. Re-issued per render so the
+  // bucket can stay private (no public reads).
+  async function signedUrlFor(path, expiresSec = 3600) {
+    const { data, error } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .createSignedUrl(path, expiresSec);
+    if (error) throw error;
+    return data.signedUrl;
+  }
+
+  async function fetchPhotos() {
+    const { data, error } = await supabase
+      .from("fit_photos")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function renderPhotosStrip() {
+    const $strip = $("#photosStrip");
+    let photos;
+    try {
+      photos = await fetchPhotos();
+    } catch (err) {
+      $strip.html(`<div class="text-danger small">Failed to load photos: ${err.message}</div>`);
+      return;
+    }
+    if (!photos.length) {
+      $strip.html(`<div class="text-muted small text-center py-2">No photos yet — snap one to start tracking shape vs. drain over time.</div>`);
+      return;
+    }
+    $strip.empty();
+    for (const p of photos) {
+      let url;
+      try { url = await signedUrlFor(p.storage_path); }
+      catch (_) { continue; }
+      const dateStr = new Date(p.created_at).toLocaleDateString();
+      const $img = $(`<img class="photo-thumb" loading="lazy" alt="${dateStr}" title="${dateStr} · bal ${p.balance} · drain ${p.daily_drain}" />`);
+      $img.attr("src", url);
+      $img.on("click", () => openPhotoModal(p, url));
+      $strip.append($img);
+    }
+  }
+
+  function openPhotoModal(photo, url) {
+    const dateStr = new Date(photo.created_at).toLocaleString();
+    $("#photoModalImg").attr("src", url);
+    $("#photoModalMeta").html(
+      `<div><strong>${dateStr}</strong></div>` +
+      `<div>Balance: ${photo.balance} · Daily drain: ${photo.daily_drain}</div>`
+    );
+    $("#photoDeleteBtn").off("click").on("click", async () => {
+      if (!window.confirm("Delete this photo?")) return;
+      await deletePhoto(photo);
+      closePhotoModal();
+      await renderPhotosStrip();
+    });
+    $("#photoModal").addClass("show").attr("aria-hidden", "false");
+  }
+  function closePhotoModal() {
+    $("#photoModal").removeClass("show").attr("aria-hidden", "true");
+    $("#photoModalImg").attr("src", "");
+  }
+
+  async function deletePhoto(photo) {
+    // Best-effort: remove object then row. If storage removal fails we still drop the
+    // row so the gallery isn't stuck on a broken thumbnail.
+    try { await supabase.storage.from(PHOTO_BUCKET).remove([photo.storage_path]); } catch (_) {}
+    await supabase.from("fit_photos").delete().eq("id", photo.id);
+  }
+
+  async function uploadPhoto(file) {
+    const $uploading = $("#photosUploading");
+    $uploading.show();
+    try {
+      const blob = await resizePhotoFile(file);
+      // Read current fit_state at upload time for the metadata snapshot. Fresher than
+      // closing over `state` inside init(), which could go stale across many ops.
+      const { data: cur, error: curErr } = await supabase
+        .from("fit_state").select("balance, daily_drain").eq("id", "singleton").single();
+      if (curErr) throw curErr;
+
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const rand = Math.random().toString(36).slice(2, 8);
+      const path = `${ts}-${rand}.jpg`;
+
+      const { error: upErr } = await supabase.storage
+        .from(PHOTO_BUCKET)
+        .upload(path, blob, { contentType: "image/jpeg", upsert: false });
+      if (upErr) throw upErr;
+
+      const { error: insErr } = await supabase
+        .from("fit_photos")
+        .insert({ balance: cur.balance, daily_drain: cur.daily_drain, storage_path: path });
+      if (insErr) {
+        // Roll back the storage object so we don't leave orphans.
+        try { await supabase.storage.from(PHOTO_BUCKET).remove([path]); } catch (_) {}
+        throw insErr;
+      }
+      await renderPhotosStrip();
+    } catch (err) {
+      console.error(err);
+      window.alert("Photo upload failed: " + (err.message || err));
+    } finally {
+      $uploading.hide();
+    }
+  }
+
+  async function setupPhotos() {
+    $("#photoFileInput").off("change").on("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      await uploadPhoto(file);
+      // Clear so re-selecting the same file still fires change.
+      e.target.value = "";
+    });
+    $("#photoCloseBtn").off("click").on("click", closePhotoModal);
+    $("#photoModal").off("click").on("click", (e) => {
+      if (e.target === document.getElementById("photoModal")) closePhotoModal();
+    });
+    await renderPhotosStrip();
+  }
+
   // ====== App init ======
   async function init() {
     // Keep theme in sync with system preference (including when user changes it while the page is open)
@@ -663,6 +828,7 @@
       refreshUI(state, { drainedNow });
       await refreshRepsChart();
       await refreshSubmissions();
+      await setupPhotos();
 
       // Wire up rep buttons
       function setRepButtonsDisabled(disabled) {
@@ -1199,6 +1365,63 @@
     }
   }
 
-  // Start
-  $(init);
+  // ====== Auth gate ======
+  // Boot flow: check for an existing session. If present, render the app and call init().
+  // Otherwise show the login overlay and wait for a successful sign-in. Sign-out clears
+  // the session and re-shows the overlay. We do NOT call init() twice in the same page
+  // lifecycle (init wires DOM events that don't tolerate re-binding cleanly).
+  let appInitialized = false;
+
+  function showAuthOverlay(msg) {
+    $("#authOverlay").attr("aria-hidden", "false").css("display", "flex");
+    $("#appRoot").hide();
+    if (msg) $("#authError").text(msg).show();
+    else $("#authError").hide().text("");
+  }
+  function hideAuthOverlay() {
+    $("#authOverlay").attr("aria-hidden", "true").css("display", "none");
+    $("#appRoot").show();
+    $("#authError").hide().text("");
+  }
+
+  async function boot() {
+    $("#authForm").off("submit").on("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#authEmailInput").val().trim();
+      const password = $("#authPasswordInput").val();
+      const $btn = $("#authSubmitBtn");
+      $btn.prop("disabled", true).text("Signing in…");
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      $btn.prop("disabled", false).text("Sign in");
+      if (error) {
+        $("#authError").text(error.message || "Sign-in failed").show();
+        return;
+      }
+      $("#authPasswordInput").val("");
+      hideAuthOverlay();
+      if (!appInitialized) {
+        appInitialized = true;
+        init();
+      }
+    });
+
+    $("#signOutLink").off("click").on("click", async (e) => {
+      e.preventDefault();
+      await supabase.auth.signOut();
+      // Full reload so all in-memory state (intervals, charts, supabase client cache)
+      // is discarded cleanly. Cheaper than tearing down by hand.
+      window.location.reload();
+    });
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      hideAuthOverlay();
+      appInitialized = true;
+      init();
+    } else {
+      showAuthOverlay();
+    }
+  }
+
+  $(boot);
 })();
