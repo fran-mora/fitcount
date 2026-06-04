@@ -939,12 +939,11 @@
       const pad2 = (n) => String(n).padStart(2, "0");
       const fmtClock = (totalSec) => `${pad2(Math.floor(totalSec / 60))}:${pad2(totalSec % 60)}`;
 
-      // Schedule walker. Each set is 30s work + 30s rest; after every 5th set there's an extra
-      // 30s bonus rest, and after every 10th set the bonus is 60s instead.
+      // Schedule walker. Each set is 30s work + 45s rest. Bonus rests are currently
+      // disabled (bonusAfterSet returns 0); the bonus_rest code paths are preserved
+      // so re-enabling is a one-liner.
       // Returns: { set, phase: 'work'|'rest'|'bonus_rest', secsLeft, setsDone, bonusTotal }.
-      function bonusAfterSet(n) {
-        if (n % 10 === 0) return 60;
-        if (n % 5 === 0) return 30;
+      function bonusAfterSet(_n) {
         return 0;
       }
       function workoutScheduleAt(totalSec) {
@@ -953,8 +952,8 @@
           if (totalSec < t + 30) return { set, phase: "work", secsLeft: t + 30 - totalSec, setsDone: set - 1, bonusTotal: 0 };
           t += 30;
           // Badge for set N appears as soon as its work phase ends — so setsDone=set during rest.
-          if (totalSec < t + 30) return { set, phase: "rest", secsLeft: t + 30 - totalSec, setsDone: set, bonusTotal: 0 };
-          t += 30;
+          if (totalSec < t + 45) return { set, phase: "rest", secsLeft: t + 45 - totalSec, setsDone: set, bonusTotal: 0 };
+          t += 45;
           const bonus = bonusAfterSet(set);
           if (bonus > 0 && totalSec < t + bonus) return { set, phase: "bonus_rest", secsLeft: t + bonus - totalSec, setsDone: set, bonusTotal: bonus };
           t += bonus;
