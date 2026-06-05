@@ -975,14 +975,11 @@
       }
       const suggestPoints = (totalSec) => suggestPointsFromState(totalSec, workoutScheduleAt(totalSec));
 
-      // ----- Audio cues -----
-      // Primary path: Web Audio (oscillator + gain envelope). On iOS this uses the
-      // "ambient" audio-session category, which MIXES with background music
-      // (Spotify/podcasts) instead of pausing it.
-      // Fallback path: HTMLAudio with baked-in WAV tones. iOS forces this into the
-      // "playback" category, which pauses other audio — only used if AudioContext is
-      // unavailable (very old browsers). The old iOS PWA Web-Audio-silence bug that
-      // motivated HTMLAudio-by-default was fixed in iOS 16.4 (Apr 2023).
+      // ----- Audio cues (HTMLAudio with baked-in WAV tones) -----
+      // Web Audio API is silent in iOS Home-Screen standalone (WebClip) mode — a long-standing
+      // Safari bug. HTMLAudio with a real audio source routes through the iOS "media playback"
+      // session category, which works in both Safari and standalone PWA mode and ignores the
+      // hardware silent switch.
       function makeToneWavDataUrl(freqHz, durationMs, peakGain = 0.75) {
         const sr = 22050;
         const samples = Math.max(1, Math.floor(sr * durationMs / 1000));
@@ -1019,12 +1016,6 @@
       const cueWorkAccent  = new Audio(makeToneWavDataUrl(1400, 340));  // WORK begins (new set)
       const cueRestTick    = new Audio(makeToneWavDataUrl(620, 180));   // work ending, rest coming
       const cueRestAccent  = new Audio(makeToneWavDataUrl(880, 340));   // REST begins
-      // Tone metadata used by the Web Audio path (preferred over HTMLAudio so
-      // background music keeps playing).
-      cueWorkTick.cueTone   = { freq: 920,  ms: 180 };
-      cueWorkAccent.cueTone = { freq: 1400, ms: 340 };
-      cueRestTick.cueTone   = { freq: 620,  ms: 180 };
-      cueRestAccent.cueTone = { freq: 880,  ms: 340 };
       // Separate silent unlock element so we never touch the cue elements before their
       // first real play. Touching them in the gesture (e.g. play+pause) created a race that
       // killed the very first "3" beep in earlier versions.
@@ -1034,65 +1025,15 @@
         a.playsInline = true;
       });
 
-      // Web Audio context — created lazily on the Start gesture so iOS unlocks it.
-      let audioCtx = null;
-      let useWebAudio = false;
-
-      function ensureAudioCtx() {
-        if (audioCtx) return audioCtx;
-        try {
-          const Ctx = window.AudioContext || window.webkitAudioContext;
-          if (!Ctx) return null;
-          audioCtx = new Ctx();
-          return audioCtx;
-        } catch (_) { return null; }
-      }
-
-      function playToneWebAudio(freqHz, durationMs, peak = 0.5) {
-        if (!audioCtx) return false;
-        try {
-          if (audioCtx.state === "suspended") audioCtx.resume();
-          const now = audioCtx.currentTime;
-          const dur = durationMs / 1000;
-          const attack = 0.008;
-          const release = Math.min(dur / 2, 0.04);
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.type = "sine";
-          osc.frequency.value = freqHz;
-          gain.gain.setValueAtTime(0, now);
-          gain.gain.linearRampToValueAtTime(peak, now + attack);
-          gain.gain.setValueAtTime(peak, now + Math.max(attack, dur - release));
-          gain.gain.linearRampToValueAtTime(0, now + dur);
-          osc.connect(gain).connect(audioCtx.destination);
-          osc.start(now);
-          osc.stop(now + dur + 0.02);
-          return true;
-        } catch (_) { return false; }
-      }
-
-      // Inside the Start user gesture, prime the audio path. Web Audio is preferred
-      // because it mixes with background music; we only fall back to HTMLAudio
-      // priming if AudioContext can't be created. Touching HTMLAudio at all would
-      // flip iOS into "playback" mode and pause Spotify, so we skip it when we don't
-      // need it.
+      // Inside the Start user gesture, we have to do TWO things:
+      //   1. Flip the iOS audio session into "playback" mode (silentUnlockAudio).
+      //   2. Touch EVERY cue element with .play() so iOS allows later setInterval-fired
+      //      plays of them — without this, rest cues are silent because they're never
+      //      reached during the gesture (first one is 27 s into the workout).
+      // The muted play+pause cycle is the standard iOS unlock trick. The pause runs
+      // asynchronously after play()'s promise resolves; startWorkout adds a 300 ms delay
+      // before the first real beep so the prime cycle has time to settle.
       function primeBeepAudio() {
-        const ctx = ensureAudioCtx();
-        if (ctx) {
-          try {
-            const p = ctx.resume();
-            if (p && typeof p.catch === "function") p.catch(() => {});
-            // One-sample silent buffer to fully unlock the context inside the gesture.
-            const buf = ctx.createBuffer(1, 1, 22050);
-            const src = ctx.createBufferSource();
-            src.buffer = buf;
-            src.connect(ctx.destination);
-            src.start(0);
-            useWebAudio = true;
-            return;
-          } catch (_) { useWebAudio = false; }
-        }
-        // Fallback: prime HTMLAudio (will pause background music on iOS).
         try {
           silentUnlockAudio.currentTime = 0;
           const p = silentUnlockAudio.play();
@@ -1110,9 +1051,6 @@
       }
 
       function playCue(audio) {
-        if (useWebAudio && audio && audio.cueTone) {
-          if (playToneWebAudio(audio.cueTone.freq, audio.cueTone.ms)) return;
-        }
         try {
           audio.currentTime = 0;
           const p = audio.play();
