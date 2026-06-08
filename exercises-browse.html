@@ -50,9 +50,27 @@
     .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
     .card .imgwrap {
       width: 100%; aspect-ratio: 4/3; background: #f0f0f0;
-      display: flex; align-items: center; justify-content: center;
+      position: relative; overflow: hidden;
     }
-    .card img { width: 100%; height: 100%; object-fit: cover; }
+    .card .imgwrap img {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    /* When 2 images: the second image is on top (later DOM sibling paints later).
+       It fades out periodically so the first image underneath shows through. */
+    .card .imgwrap.rotating img:last-child {
+      animation: card-blink 1.6s infinite ease-in-out;
+    }
+    @keyframes card-blink {
+      0%   { opacity: 1; }
+      45%  { opacity: 1; }
+      55%  { opacity: 0; }
+      95%  { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .card .imgwrap.rotating img:last-child { animation: none; }
+    }
     .card .body { padding: 0.5rem 0.65rem 0.65rem; }
     .card .name { font-size: 0.95rem; font-weight: 600; line-height: 1.2; margin-bottom: 0.3rem; }
     .tags { display: flex; flex-wrap: wrap; gap: 0.2rem; }
@@ -177,11 +195,13 @@ function tagHTML(ex) {
 function makeCard(ex) {
   const card = document.createElement("div");
   card.className = "card";
-  const firstImg = (ex.images && ex.images[0]) || "";
+  const imgs = (ex.images || []).slice(0, 2);
+  const imgHTML = imgs.map(p =>
+    `<img loading="lazy" src="${IMG_BASE}${p}" alt="${ex.name}" onerror="this.style.opacity=0.2">`
+  ).join("");
+  const rotateClass = imgs.length === 2 ? " rotating" : "";
   card.innerHTML = `
-    <div class="imgwrap">
-      ${firstImg ? `<img loading="lazy" src="${IMG_BASE}${firstImg}" alt="${ex.name}" onerror="this.style.opacity=0.2">` : ""}
-    </div>
+    <div class="imgwrap${rotateClass}">${imgHTML}</div>
     <div class="body">
       <div class="name">${ex.name}</div>
       <div class="tags">${tagHTML(ex)}</div>
