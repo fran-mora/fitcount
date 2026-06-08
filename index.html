@@ -91,12 +91,20 @@
 
       <div class="col-12">
         <div class="card shadow-sm">
-          <div class="card-body d-flex justify-content-between align-items-center">
-            <div>
-              <div class="text-muted small">Interval Workout</div>
-              <div class="small">10 reps every minute · 30s work / 30s rest</div>
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+              <div>
+                <div class="text-muted small">Interval Workout</div>
+                <div class="small">10 reps every minute · 30s work / <span id="restSecsLabel">45</span>s rest</div>
+              </div>
+              <button id="startWorkoutBtn" class="btn btn-lg btn-success px-4" disabled>Start</button>
             </div>
-            <button id="startWorkoutBtn" class="btn btn-lg btn-success px-4" disabled>Start</button>
+            <div class="input-group input-group-sm mt-3">
+              <span class="input-group-text">Rest seconds</span>
+              <input type="number" id="restSecsInput" class="form-control" min="5" max="300" step="5" value="45" />
+              <button id="restSecsSaveBtn" class="btn btn-outline-secondary" type="button">Save</button>
+            </div>
+            <div class="text-muted small mt-1">Persists across sessions. Adjust mid-workout with the ±5s buttons.</div>
           </div>
         </div>
       </div>
@@ -275,12 +283,18 @@
       <div id="workoutRunning">
         <div id="workoutPhase" class="workout-phase work">WORK</div>
         <div id="workoutClock" class="workout-clock">00:00</div>
+        <div id="workoutClockElapsed" class="workout-clock-elapsed" style="display:none;">00:00</div>
         <div id="workoutExtraRest" class="workout-extrarest mt-1" style="display:none;"></div>
         <div id="workoutSetStatus" class="workout-sub fw-semibold">Set 1 in progress</div>
-        <div id="workoutMinuteText" class="text-muted small">10 reps per set · 30s work / 30s rest</div>
-        <div id="workoutPhaseCountdown" class="workout-phasecountdown">30s of work left</div>
+        <div id="workoutMinuteText" class="text-muted small">10 reps per set · 30s work / 45s rest</div>
+        <div id="workoutPhaseCountdown" class="workout-phasecountdown"></div>
         <div id="workoutSets" class="workout-sets mt-2"></div>
         <div class="workout-points">Suggested: <span id="workoutLivePoints">0</span> pts</div>
+        <div class="workout-rest-tuner mt-3">
+          <button id="workoutRestMinusBtn" class="btn btn-sm btn-outline-secondary" type="button">−5s</button>
+          <span class="rest-tuner-label">Rest: <b id="workoutRestSecsText">45</b>s</span>
+          <button id="workoutRestPlusBtn" class="btn btn-sm btn-outline-secondary" type="button">+5s</button>
+        </div>
         <div class="d-flex gap-2 justify-content-center mt-3">
           <button id="workoutAddRestBtn" class="btn btn-lg btn-warning px-4" style="display:none;">+15s rest</button>
           <button id="workoutStopBtn" class="btn btn-lg btn-danger px-4">Stop</button>

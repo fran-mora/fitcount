@@ -866,6 +866,7 @@
       const $workoutRunning = $("#workoutRunning");
       const $workoutReview = $("#workoutReview");
       const $workoutClock = $("#workoutClock");
+      const $workoutClockElapsed = $("#workoutClockElapsed");
       const $workoutPhase = $("#workoutPhase");
       const $workoutSetStatus = $("#workoutSetStatus");
       const $workoutMinuteText = $("#workoutMinuteText");
@@ -915,6 +916,21 @@
         try { localStorage.setItem(WARMUP_LS_KEY, String(v)); } catch (_) {}
       }
 
+      const REST_SECS_LS_KEY = "fitcount.restSecs";
+      const REST_SECS_MIN = 5, REST_SECS_MAX = 300, REST_SECS_DEFAULT = 45;
+      function getRestSecs() {
+        try {
+          const v = parseInt(localStorage.getItem(REST_SECS_LS_KEY) || String(REST_SECS_DEFAULT), 10);
+          if (isNaN(v) || v < REST_SECS_MIN || v > REST_SECS_MAX) return REST_SECS_DEFAULT;
+          return v;
+        } catch (_) { return REST_SECS_DEFAULT; }
+      }
+      function setRestSecs(v) {
+        const clamped = Math.max(REST_SECS_MIN, Math.min(REST_SECS_MAX, v | 0));
+        try { localStorage.setItem(REST_SECS_LS_KEY, String(clamped)); } catch (_) {}
+        return clamped;
+      }
+
       // Keep the screen awake while the workout is running. Uses the Screen Wake Lock API
       // (iOS Safari ≥16.4, Chrome Android, Chrome desktop). Must be called inside a user
       // gesture initially; the lock auto-releases on page hide and must be re-acquired on
@@ -939,7 +955,7 @@
       const pad2 = (n) => String(n).padStart(2, "0");
       const fmtClock = (totalSec) => `${pad2(Math.floor(totalSec / 60))}:${pad2(totalSec % 60)}`;
 
-      // Schedule walker. Each set is 30s work + 45s rest. Bonus rests are currently
+      // Schedule walker. Each set is 30s work + getRestSecs() rest. Bonus rests are currently
       // disabled (bonusAfterSet returns 0); the bonus_rest code paths are preserved
       // so re-enabling is a one-liner.
       // Returns: { set, phase: 'work'|'rest'|'bonus_rest', secsLeft, setsDone, bonusTotal }.
@@ -947,13 +963,14 @@
         return 0;
       }
       function workoutScheduleAt(totalSec) {
+        const restSecs = getRestSecs();
         let t = 0, set = 1;
         while (set < 1000) {
           if (totalSec < t + 30) return { set, phase: "work", secsLeft: t + 30 - totalSec, setsDone: set - 1, bonusTotal: 0 };
           t += 30;
           // Badge for set N appears as soon as its work phase ends — so setsDone=set during rest.
-          if (totalSec < t + 45) return { set, phase: "rest", secsLeft: t + 45 - totalSec, setsDone: set, bonusTotal: 0 };
-          t += 45;
+          if (totalSec < t + restSecs) return { set, phase: "rest", secsLeft: t + restSecs - totalSec, setsDone: set, bonusTotal: 0 };
+          t += restSecs;
           const bonus = bonusAfterSet(set);
           if (bonus > 0 && totalSec < t + bonus) return { set, phase: "bonus_rest", secsLeft: t + bonus - totalSec, setsDone: set, bonusTotal: bonus };
           t += bonus;
@@ -1091,7 +1108,10 @@
         }
         const totalSec = Math.floor((Date.now() - workoutStartMs) / 1000);
         const st = workoutScheduleAt(totalSec);
-        $workoutClock.text(fmtClock(totalSec));
+        // Big clock = seconds left in current phase (the thing you stare at while panting).
+        // Small clock below = total elapsed mm:ss.
+        $workoutClock.text(String(st.secsLeft));
+        $workoutClockElapsed.show().text(fmtClock(totalSec));
 
         // Countdown ticks in the 3s leading into the next phase. Skip when the next phase is
         // a bonus rest (no urgency to herald more rest).
@@ -1127,11 +1147,9 @@
         const phaseLabel = st.phase === "work" ? "WORK" : st.phase === "rest" ? "REST" : "BONUS REST";
         $workoutPhase.text(phaseLabel).removeClass("work rest").addClass(phaseClass);
 
-        let countdownText;
-        if (st.phase === "work") countdownText = `${st.secsLeft}s of work left`;
-        else if (st.phase === "rest") countdownText = `${st.secsLeft}s rest — next set soon`;
-        else countdownText = `${st.secsLeft}s bonus rest`;
-        $workoutPhaseCountdown.text(countdownText);
+        // Big seconds-left counter above already conveys this; keep the small line for
+        // bonus rest only (since the big number alone doesn't say "bonus").
+        $workoutPhaseCountdown.text(st.phase === "bonus_rest" ? "bonus rest" : "");
 
         let statusText;
         if (st.phase === "bonus_rest") {
@@ -1160,11 +1178,12 @@
         // Pre-roll leads into WORK, so use the work-incoming palette.
         $workoutPhase.text("GET READY").removeClass("rest").addClass("work");
         $workoutSetStatus.text("Starting…");
-        $workoutMinuteText.text("10 reps per set · 30s work / 30s rest");
+        $workoutMinuteText.text(`10 reps per set · 30s work / ${getRestSecs()}s rest`);
         $workoutPhaseCountdown.text("");
         $workoutSets.empty();
         $workoutLivePoints.text("0");
         $workoutClock.text("3");
+        $workoutClockElapsed.hide().text("");
         // 300 ms warm-up before the first beep: lets iOS's audio engine spin up and the
         // primeBeepAudio() play+pause cycles settle, so all three preroll ticks land at
         // uniform 1 s spacing. Without this, the first beep is delayed by ~150 ms while
@@ -1201,6 +1220,7 @@
         $workoutSetStatus.text("Warm-up — no points");
         $workoutMinuteText.text(`${minutes} min warm-up · workout starts after`);
         $workoutPhaseCountdown.text("");
+        $workoutClockElapsed.hide().text("");
         $workoutSets.empty();
         $workoutLivePoints.text("0");
         $workoutStopBtn.prop("disabled", false);
@@ -1307,6 +1327,49 @@
       });
       $workoutSetupCancelBtn.off("click").on("click", closeWorkout);
       $workoutStopBtn.off("click").on("click", stopWorkout);
+
+      // ----- Rest-seconds: persistent global, editable on main card + via ±5s in workout.
+      // The schedule walker reads getRestSecs() every tick, so mid-workout changes apply to
+      // current and future rests. ±5s steps mean any mid-rest jump is small (≤5s).
+      const $restSecsInput = $("#restSecsInput");
+      const $restSecsSaveBtn = $("#restSecsSaveBtn");
+      const $restSecsLabel = $("#restSecsLabel");
+      const $workoutRestSecsText = $("#workoutRestSecsText");
+      const $workoutRestMinusBtn = $("#workoutRestMinusBtn");
+      const $workoutRestPlusBtn = $("#workoutRestPlusBtn");
+
+      function refreshRestSecsDisplay() {
+        const v = getRestSecs();
+        if ($restSecsInput.length) $restSecsInput.val(v);
+        $restSecsLabel.text(v);
+        $workoutRestSecsText.text(v);
+        // Only override the steady-state minute text — preroll/warm-up set their own.
+        if (workoutActive && !workoutInWarmup) {
+          $workoutMinuteText.text(`10 reps per set · 30s work / ${v}s rest`);
+        }
+      }
+      refreshRestSecsDisplay();
+
+      $restSecsSaveBtn.off("click").on("click", () => {
+        const raw = parseInt($restSecsInput.val(), 10);
+        if (isNaN(raw)) return;
+        setRestSecs(raw);
+        refreshRestSecsDisplay();
+      });
+      $restSecsInput.off("change").on("change", () => {
+        const raw = parseInt($restSecsInput.val(), 10);
+        if (isNaN(raw)) return;
+        setRestSecs(raw);
+        refreshRestSecsDisplay();
+      });
+      $workoutRestMinusBtn.off("click").on("click", () => {
+        setRestSecs(getRestSecs() - 5);
+        refreshRestSecsDisplay();
+      });
+      $workoutRestPlusBtn.off("click").on("click", () => {
+        setRestSecs(getRestSecs() + 5);
+        refreshRestSecsDisplay();
+      });
       $workoutDiscardBtn.off("click").on("click", closeWorkout);
       $workoutConfirmBtn.off("click").on("click", async () => {
         const pts = parseInt($workoutPointsInput.val(), 10);
