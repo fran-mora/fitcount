@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Exercise browser — yuhonas / free-exercise-db</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root {
+      --fg: #1a1a1a; --bg: #fafafa; --muted: #666;
+      --card-bg: #fff; --border: #ddd; --accent: #0d6efd; --accent-soft: #e7f1ff;
+      --tag-bg: #eef; --tag-fg: #334;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0; padding: 0; color: var(--fg); background: var(--bg);
+    }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(255,255,255,0.97); backdrop-filter: blur(6px);
+      border-bottom: 1px solid var(--border); padding: 0.85rem 1rem 0.65rem;
+    }
+    header .row1 {
+      display: flex; align-items: baseline; justify-content: space-between;
+      max-width: 1200px; margin: 0 auto 0.5rem;
+    }
+    h1 { margin: 0; font-size: 1.2rem; }
+    .count { color: var(--muted); font-size: 0.9rem; }
+    .controls {
+      display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+      max-width: 1200px; margin: 0 auto;
+    }
+    input[type=search], select {
+      padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 0.4rem;
+      font-size: 0.92rem; background: #fff; color: var(--fg);
+    }
+    input[type=search] { flex: 1 1 220px; min-width: 180px; }
+    select { flex: 0 1 auto; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.85rem;
+      max-width: 1200px; margin: 0 auto; padding: 1rem;
+    }
+    .card {
+      background: var(--card-bg); border: 1px solid var(--border); border-radius: 0.6rem;
+      overflow: hidden; cursor: pointer; transition: transform 0.12s, box-shadow 0.12s;
+      display: flex; flex-direction: column;
+    }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    .card .imgwrap {
+      width: 100%; aspect-ratio: 4/3; background: #f0f0f0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card img { width: 100%; height: 100%; object-fit: cover; }
+    .card .body { padding: 0.5rem 0.65rem 0.65rem; }
+    .card .name { font-size: 0.95rem; font-weight: 600; line-height: 1.2; margin-bottom: 0.3rem; }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+    .tag {
+      font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 0.3rem;
+      background: var(--tag-bg); color: var(--tag-fg); white-space: nowrap;
+    }
+    .tag.level-beginner    { background: #d1f5d1; color: #155724; }
+    .tag.level-intermediate{ background: #fff3cd; color: #856404; }
+    .tag.level-expert      { background: #f8d7da; color: #721c24; }
+    .nores { color: var(--muted); padding: 2rem; text-align: center; }
+
+    /* Modal */
+    .modal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+      padding: 1rem;
+    }
+    .modal.show { display: flex; }
+    .modal-inner {
+      background: var(--card-bg); border-radius: 0.7rem;
+      max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto;
+    }
+    .modal-head {
+      padding: 1rem 1.25rem 0.5rem; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: flex-start;
+    }
+    .modal-head h2 { margin: 0; font-size: 1.15rem; }
+    .modal-close {
+      background: none; border: none; font-size: 1.5rem; cursor: pointer;
+      color: var(--muted); padding: 0; line-height: 1;
+    }
+    .modal-body { padding: 1rem 1.25rem 1.25rem; }
+    .modal-imgs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.85rem; }
+    .modal-imgs img { width: calc(50% - 0.25rem); border-radius: 0.4rem; border: 1px solid var(--border); }
+    .modal ol { padding-left: 1.2rem; line-height: 1.45; font-size: 0.94rem; }
+    .modal ol li { margin-bottom: 0.4rem; }
+    .modal .tags { margin-bottom: 0.8rem; }
+
+    .loading { text-align: center; padding: 3rem; color: var(--muted); }
+
+    @media (prefers-color-scheme: dark) {
+      :root { --fg: #eee; --bg: #181a1d; --muted: #999;
+              --card-bg: #23262b; --border: #353941; --accent: #4a9eff; --accent-soft: #1a3a5a;
+              --tag-bg: #2a2f37; --tag-fg: #cbd; }
+      header { background: rgba(24,26,29,0.97); }
+      .card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+      .card .imgwrap { background: #2a2f37; }
+      .card img, .modal-imgs img { background: #f0f0f0; } /* white-bg photos look weird on dark, keep them white */
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="row1">
+    <h1>Exercise browser — <span style="font-weight:400; color:var(--muted);">yuhonas / free-exercise-db</span></h1>
+    <div class="count"><span id="visibleCount">…</span> / <span id="totalCount">…</span></div>
+  </div>
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search by name (e.g. push-up, squat, curl)…" />
+    <select id="muscle"><option value="">All muscles</option></select>
+    <select id="equipment"><option value="">All equipment</option></select>
+    <select id="category"><option value="">All categories</option></select>
+    <select id="level"><option value="">All levels</option></select>
+  </div>
+</header>
+
+<div id="grid" class="grid"></div>
+<div id="loading" class="loading">Loading 873 exercises…</div>
+<div id="empty" class="nores" style="display:none;">No exercises match those filters.</div>
+
+<!-- Modal -->
+<div id="modal" class="modal" aria-hidden="true">
+  <div class="modal-inner" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="modalTitle"></h2>
+      <button class="modal-close" id="modalClose" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-imgs" id="modalImgs"></div>
+      <div class="tags" id="modalTags"></div>
+      <ol id="modalSteps"></ol>
+    </div>
+  </div>
+</div>
+
+<script>
+const IMG_BASE = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/";
+const JSON_URL = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json";
+
+let ALL = [];
+const $ = (id) => document.getElementById(id);
+
+const grid = $("grid"), loading = $("loading"), empty = $("empty");
+const qInput = $("q"), muscleSel = $("muscle"), equipSel = $("equipment"),
+      catSel = $("category"), levelSel = $("level");
+const visibleCount = $("visibleCount"), totalCount = $("totalCount");
+const modal = $("modal"), modalTitle = $("modalTitle"),
+      modalImgs = $("modalImgs"), modalTags = $("modalTags"),
+      modalSteps = $("modalSteps"), modalClose = $("modalClose");
+
+function uniqSorted(arr) { return Array.from(new Set(arr)).filter(Boolean).sort(); }
+
+function populateSelect(sel, values) {
+  for (const v of values) {
+    const opt = document.createElement("option");
+    opt.value = v; opt.textContent = v;
+    sel.appendChild(opt);
+  }
+}
+
+function tagHTML(ex) {
+  const parts = [];
+  if (ex.primaryMuscles && ex.primaryMuscles.length)
+    parts.push(`<span class="tag">${ex.primaryMuscles[0]}</span>`);
+  if (ex.equipment) parts.push(`<span class="tag">${ex.equipment}</span>`);
+  if (ex.level) parts.push(`<span class="tag level-${ex.level}">${ex.level}</span>`);
+  return parts.join("");
+}
+
+function makeCard(ex) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const firstImg = (ex.images && ex.images[0]) || "";
+  card.innerHTML = `
+    <div class="imgwrap">
+      ${firstImg ? `<img loading="lazy" src="${IMG_BASE}${firstImg}" alt="${ex.name}" onerror="this.style.opacity=0.2">` : ""}
+    </div>
+    <div class="body">
+      <div class="name">${ex.name}</div>
+      <div class="tags">${tagHTML(ex)}</div>
+    </div>
+  `;
+  card.addEventListener("click", () => openModal(ex));
+  return card;
+}
+
+function render() {
+  const q = qInput.value.trim().toLowerCase();
+  const m = muscleSel.value, eq = equipSel.value, cat = catSel.value, lv = levelSel.value;
+  grid.innerHTML = "";
+  let n = 0;
+  for (const ex of ALL) {
+    if (q && !ex.name.toLowerCase().includes(q)) continue;
+    if (m && !(ex.primaryMuscles || []).includes(m)) continue;
+    if (eq && ex.equipment !== eq) continue;
+    if (cat && ex.category !== cat) continue;
+    if (lv && ex.level !== lv) continue;
+    grid.appendChild(makeCard(ex));
+    n++;
+  }
+  visibleCount.textContent = n;
+  empty.style.display = n === 0 ? "block" : "none";
+}
+
+function openModal(ex) {
+  modalTitle.textContent = ex.name;
+  modalImgs.innerHTML = (ex.images || []).map(p =>
+    `<img loading="lazy" src="${IMG_BASE}${p}" alt="${ex.name}">`
+  ).join("");
+  modalTags.innerHTML = tagHTML(ex) +
+    (ex.secondaryMuscles && ex.secondaryMuscles.length
+      ? `<span class="tag">also: ${ex.secondaryMuscles.join(", ")}</span>` : "") +
+    (ex.category ? `<span class="tag">${ex.category}</span>` : "") +
+    (ex.mechanic ? `<span class="tag">${ex.mechanic}</span>` : "") +
+    (ex.force ? `<span class="tag">${ex.force}</span>` : "");
+  modalSteps.innerHTML = (ex.instructions || []).map(s => `<li>${s}</li>`).join("");
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+}
+function closeModal() {
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+modalClose.addEventListener("click", closeModal);
+modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+[qInput, muscleSel, equipSel, catSel, levelSel].forEach(el =>
+  el.addEventListener("input", render));
+
+(async () => {
+  try {
+    const r = await fetch(JSON_URL);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    ALL = await r.json();
+    ALL.sort((a, b) => a.name.localeCompare(b.name));
+
+    populateSelect(muscleSel,    uniqSorted(ALL.flatMap(x => x.primaryMuscles || [])));
+    populateSelect(equipSel,     uniqSorted(ALL.map(x => x.equipment)));
+    populateSelect(catSel,       uniqSorted(ALL.map(x => x.category)));
+    populateSelect(levelSel,     uniqSorted(ALL.map(x => x.level)));
+
+    totalCount.textContent = ALL.length;
+    loading.style.display = "none";
+    render();
+  } catch (e) {
+    loading.textContent = "Failed to load exercises.json: " + e.message;
+  }
+})();
+</script>
+
+</body>
+</html>
