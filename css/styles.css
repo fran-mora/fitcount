@@ -83,6 +83,38 @@ footer {
   padding-bottom: 0.5rem;
 }
 
+/* Debug log overlay: tap "Debug" in footer */
+.debug-panel {
+  position: fixed;
+  left: 0.5rem; right: 0.5rem; bottom: 0.5rem;
+  max-height: 60vh;
+  background: rgba(20,20,24,0.96);
+  color: #d6e1ea;
+  border-radius: 0.5rem;
+  z-index: 2100;
+  display: flex; flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.debug-panel-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.debug-panel-head strong { color: #fff; margin-right: auto; }
+.debug-panel-body {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  flex: 1;
+  overflow: auto;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.debug-panel-body .line-ok   { color: #8bf08b; }
+.debug-panel-body .line-err  { color: #ff8a8a; }
+.debug-panel-body .line-info { color: #cfd9e2; }
+
 /* Tier color palette — driven by data-tier on <html>. */
 :root                       { --tier-color: #0d6efd; --tier-color-rgb: 13,110,253; }
 html[data-tier="0"]         { --tier-color: #0d6efd; --tier-color-rgb: 13,110,253; }  /* blue */

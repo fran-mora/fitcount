@@ -262,8 +262,23 @@
       <div>Daily drain: tokens are removed automatically each day. Add tokens by doing reps (+1 each).</div>
       <div class="mt-2">
         <a href="#" id="signOutLink" class="text-muted">Sign out</a>
+        <span class="mx-2">·</span>
+        <a href="#" id="debugLink" class="text-muted">Debug</a>
+        <span class="mx-2">·</span>
+        <span class="text-muted" id="buildVersion">build —</span>
       </div>
     </footer>
+
+    <!-- On-screen debug log: tap "Debug" in footer to view recent Supabase calls -->
+    <div id="debugPanel" class="debug-panel" style="display:none;" aria-hidden="true">
+      <div class="debug-panel-head">
+        <strong>Debug log</strong>
+        <button id="debugCopyBtn" type="button" class="btn btn-sm btn-outline-secondary">Copy</button>
+        <button id="debugClearBtn" type="button" class="btn btn-sm btn-outline-secondary">Clear</button>
+        <button id="debugCloseBtn" type="button" class="btn btn-sm btn-outline-secondary">Close</button>
+      </div>
+      <pre id="debugLogBody" class="debug-panel-body"></pre>
+    </div>
   </div>
 
   <!-- Interval Workout overlay -->
@@ -324,7 +339,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
   <!-- App script -->
-  <script defer src="js/app.js"></script>
+  <script defer src="js/app.js?v=20260618c"></script>
 
   <!-- Bootstrap JS (optional) -->
   <script

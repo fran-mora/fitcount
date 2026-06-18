@@ -49,13 +49,45 @@
   // latest optimistic value when coalesced saves run later.
   let state = null;
 
+  // ====== Build identifier (matches the ?v= in index.html) ======
+  // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
+  const BUILD_VERSION = "20260618c";
+
+  // ====== Debug log ring buffer ======
+  // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
+  // buffer so it can be viewed on-device without DevTools (footer → Debug).
+  const DEBUG_LOG_MAX = 200;
+  const debugLog = []; // { t: epoch ms, level: 'info'|'ok'|'err', text }
+  function pushDebug(level, text) {
+    debugLog.push({ t: Date.now(), level, text });
+    if (debugLog.length > DEBUG_LOG_MAX) debugLog.shift();
+    renderDebugPanelIfOpen();
+  }
+  function renderDebugPanelIfOpen() {
+    const $body = $("#debugLogBody");
+    if (!$body.length || $("#debugPanel").css("display") === "none") return;
+    $body.html(debugLog.map(formatDebugLine).join("\n"));
+    $body.scrollTop($body[0].scrollHeight);
+  }
+  function formatDebugLine(entry) {
+    const d = new Date(entry.t);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    const cls = entry.level === "err" ? "line-err" : entry.level === "ok" ? "line-ok" : "line-info";
+    const esc = String(entry.text).replace(/[<&>]/g, (c) => ({"<":"&lt;","&":"&amp;",">":"&gt;"}[c]));
+    return `<span class="${cls}">${hh}:${mm}:${ss} ${esc}</span>`;
+  }
+
   // ====== Network instrumentation ======
   // Wrap every Supabase call with: console timing, 15s timeout, error logging.
-  // Purpose: make slow/failing calls visible in DevTools and stop calls hanging forever.
+  // Purpose: make slow/failing calls visible in DevTools AND in the in-app debug panel,
+  // and stop calls hanging forever.
   const SUPABASE_TIMEOUT_MS = 15000;
   function withTiming(label, run) {
     const started = performance.now();
     console.log(`[fitcount] ${label} → start`);
+    pushDebug("info", `${label} → start`);
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`Timed out after ${SUPABASE_TIMEOUT_MS}ms`)), SUPABASE_TIMEOUT_MS)
     );
@@ -65,18 +97,30 @@
         // PostgREST returns { data, error } even on bad SQL — surface that as an error too.
         if (result && result.error) {
           console.warn(`[fitcount] ${label} ✗ ${ms}ms`, result.error);
+          pushDebug("err", `${label} ✗ ${ms}ms · ${result.error.message || result.error.code || "?"}`);
         } else {
           console.log(`[fitcount] ${label} ✓ ${ms}ms`);
+          pushDebug("ok", `${label} ✓ ${ms}ms`);
         }
         return result;
       },
       (err) => {
         const ms = Math.round(performance.now() - started);
         console.warn(`[fitcount] ${label} ✗ ${ms}ms (threw)`, err);
+        pushDebug("err", `${label} ✗ ${ms}ms · threw: ${err && err.message || err}`);
         throw err;
       }
     );
   }
+  // Catch ANY runtime error and surface it in the debug panel + sync badge so the user
+  // doesn't need DevTools to see what went wrong.
+  window.addEventListener("error", (e) => {
+    pushDebug("err", `JS error: ${e.message} @ ${e.filename}:${e.lineno}`);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason;
+    pushDebug("err", `Promise rejection: ${r && r.message || r}`);
+  });
 
   // ====== Sync status badge (under the balance) ======
   let syncStatusTimer = null;
@@ -1000,17 +1044,27 @@
       // Optimistic flow: update local state + UI instantly; persist in background.
       // The sync-status badge under the balance shows saving / saved / error+retry.
       const handleAdd = (amt) => () => {
-        const projected = projectAdd(state, amt);
-        const tierFlash = projected._tieredUp;
-        delete projected._tieredUp;
-        state = projected;
-        refreshUI(state, { drainedNow: 0 });
-        if (tierFlash) flashTierCelebration(tierFlash.oldDrain, tierFlash.newDrain);
-        // Background work — none of this blocks the UI.
-        saveCurrentBalance();
-        writeRepsHistoryBestEffort(amt);
-        trackSubmission(amt);
-        refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
+        pushDebug("info", `tap +${amt}`);
+        if (!state) {
+          pushDebug("err", `tap +${amt} ignored: state not loaded yet`);
+          return;
+        }
+        try {
+          const projected = projectAdd(state, amt);
+          const tierFlash = projected._tieredUp;
+          delete projected._tieredUp;
+          state = projected;
+          refreshUI(state, { drainedNow: 0 });
+          if (tierFlash) flashTierCelebration(tierFlash.oldDrain, tierFlash.newDrain);
+          // Background work — none of this blocks the UI.
+          saveCurrentBalance();
+          writeRepsHistoryBestEffort(amt);
+          trackSubmission(amt);
+          refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
+        } catch (err) {
+          pushDebug("err", `handleAdd(+${amt}) threw: ${err && err.message || err}`);
+          setSyncStatus("error", `unexpected error: ${err && err.message || err}`, null);
+        }
       };
 
       $rep1Btn.off("click").on("click", handleAdd(1));
@@ -1581,8 +1635,41 @@
           $updateDrainBtn.prop("disabled", false);
         }
       });
+
+      // ===== Debug log panel wiring =====
+      $("#buildVersion").text(`build ${BUILD_VERSION}`);
+      const $debugPanel = $("#debugPanel");
+      const $debugBody = $("#debugLogBody");
+      function openDebugPanel() {
+        $debugPanel.show().attr("aria-hidden", "false");
+        renderDebugPanelIfOpen();
+      }
+      function closeDebugPanel() {
+        $debugPanel.hide().attr("aria-hidden", "true");
+      }
+      $("#debugLink").off("click").on("click", (e) => { e.preventDefault(); openDebugPanel(); });
+      $("#debugCloseBtn").off("click").on("click", closeDebugPanel);
+      $("#debugClearBtn").off("click").on("click", () => {
+        debugLog.length = 0;
+        renderDebugPanelIfOpen();
+      });
+      $("#debugCopyBtn").off("click").on("click", async () => {
+        const text = debugLog.map((e) => {
+          const d = new Date(e.t).toISOString();
+          return `${d} [${e.level}] ${e.text}`;
+        }).join("\n");
+        try {
+          await navigator.clipboard.writeText(text);
+          showAlert("Debug log copied to clipboard.", "success");
+          setTimeout(hideAlert, 1500);
+        } catch (err) {
+          showAlert("Couldn't copy: " + (err.message || err), "danger");
+        }
+      });
+      pushDebug("info", `app ready · build ${BUILD_VERSION}`);
     } catch (err) {
       console.error(err);
+      pushDebug("err", `init error: ${err && err.message || err}`);
       showAlert(`Initialization error: ${err.message || err}`, "danger");
     } finally {
       setLoading(false);
