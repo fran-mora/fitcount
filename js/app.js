@@ -697,6 +697,16 @@
     return data || [];
   }
 
+  function localDayKey(iso) {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  function dayHeading(iso) {
+    return new Date(iso).toLocaleDateString(undefined, {
+      weekday: "short", day: "numeric", month: "short", year: "numeric"
+    });
+  }
+
   async function renderPhotosStrip() {
     const $strip = $("#photosStrip");
     let photos;
@@ -710,16 +720,33 @@
       $strip.html(`<div class="text-muted small text-center py-2">No photos yet — snap one to start tracking shape vs. drain over time.</div>`);
       return;
     }
-    $strip.empty();
+    // Group by local calendar day. fetchPhotos() returns newest-first, so the
+    // first occurrence of each day key gives the day's display ordering.
+    const dayOrder = [];
+    const byDay = new Map();
     for (const p of photos) {
-      let url;
-      try { url = await signedUrlFor(p.storage_path); }
-      catch (_) { continue; }
-      const dateStr = new Date(p.created_at).toLocaleDateString();
-      const $img = $(`<img class="photo-thumb" loading="lazy" alt="${dateStr}" title="${dateStr} · bal ${p.balance} · drain ${p.daily_drain}" />`);
-      $img.attr("src", url);
-      $img.on("click", () => openPhotoModal(p, url));
-      $strip.append($img);
+      const key = localDayKey(p.created_at);
+      if (!byDay.has(key)) { byDay.set(key, []); dayOrder.push(key); }
+      byDay.get(key).push(p);
+    }
+    $strip.empty();
+    for (const key of dayOrder) {
+      const dayPhotos = byDay.get(key);
+      const $group = $(`<div class="photos-day"></div>`);
+      $group.append(`<div class="photos-day-head">${dayHeading(dayPhotos[0].created_at)} <span class="text-muted">· ${dayPhotos.length}</span></div>`);
+      const $row = $(`<div class="photos-day-row"></div>`);
+      for (const p of dayPhotos) {
+        let url;
+        try { url = await signedUrlFor(p.storage_path); }
+        catch (_) { continue; }
+        const timeStr = new Date(p.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const $img = $(`<img class="photo-thumb" loading="lazy" alt="${timeStr}" title="${timeStr} · bal ${p.balance} · drain ${p.daily_drain}" />`);
+        $img.attr("src", url);
+        $img.on("click", () => openPhotoModal(p, url));
+        $row.append($img);
+      }
+      $group.append($row);
+      $strip.append($group);
     }
   }
 

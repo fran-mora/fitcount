@@ -231,6 +231,16 @@ html[data-tier="9"]         { --tier-color: #6610f2; --tier-color-rgb: 102,16,24
 /* ===== Progress photos ===== */
 .photos-strip {
   display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.photos-day-head {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+.photos-day-row {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
