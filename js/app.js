@@ -51,7 +51,7 @@
 
   // ====== Build identifier (matches the ?v= in index.html) ======
   // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
-  const BUILD_VERSION = "20260618c";
+  const BUILD_VERSION = "20260618d";
 
   // ====== Debug log ring buffer ======
   // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
@@ -153,19 +153,28 @@
   });
 
   // ====== Tier ladder ======
-  // Base drain 110 → at balance >= 200 unlock drain 120; every +100 tokens unlocks +10 drain,
-  // capped at MAX_DRAIN. One-way ratchet: drain never auto-decreases.
+  // Base drain 110 → at balance >= 200 unlock drain 120 (+10 per tier). Tiers go up forever.
+  // Per-tier cost starts at 200 and ramps by TOKEN_STEP each tier UNTIL it hits THRESHOLD_CAP
+  // (500), then every later tier costs exactly THRESHOLD_CAP. One-way ratchet: drain never
+  // auto-decreases. There is no MAX_DRAIN / MAX_TIER cap.
   const BASE_DRAIN = 110;
-  const MAX_DRAIN = 200;
   const TIER_STEP = 10;            // drain bump per tier
-  const TOKEN_STEP = 100;          // tokens needed per tier
+  const TOKEN_STEP = 100;          // tokens needed per tier in the ramp phase
   const FIRST_THRESHOLD = 200;     // balance needed to unlock tier 1
-  const MAX_TIER = (MAX_DRAIN - BASE_DRAIN) / TIER_STEP; // = 9
+  const THRESHOLD_CAP = 500;       // per-tier cost caps here and stays flat
+  // The first tier whose cost equals the cap (with FIRST_THRESHOLD=200, TOKEN_STEP=100,
+  // THRESHOLD_CAP=500 → tier 4).
+  const FIRST_CAPPED_TIER = Math.floor((THRESHOLD_CAP - FIRST_THRESHOLD) / TOKEN_STEP) + 1;
+  // Used only for cycling the accent-color palette (CSS defines colors for tiers 0..9).
+  const COLOR_CYCLE = 10;
 
+  // Tier implied by current balance (i.e. "if I tier-up now, what tier would I land on?").
+  // Capped at FIRST_CAPPED_TIER because per-tier cost caps at THRESHOLD_CAP, so balance
+  // never needs to exceed THRESHOLD_CAP before an auto-ratchet kicks in.
   function tierFor(balance) {
     if (balance < FIRST_THRESHOLD) return 0;
-    const t = Math.floor((balance - (FIRST_THRESHOLD - TOKEN_STEP)) / TOKEN_STEP);
-    return Math.max(0, Math.min(MAX_TIER, t));
+    const linear = Math.floor((balance - (FIRST_THRESHOLD - TOKEN_STEP)) / TOKEN_STEP);
+    return Math.max(0, Math.min(FIRST_CAPPED_TIER, linear));
   }
 
   function autoMinDrain(balance) {
@@ -173,8 +182,10 @@
   }
 
   function thresholdForTier(t) {
-    // Tier 0 unlocked at -inf; tier t (>=1) unlocked at FIRST_THRESHOLD + (t-1)*TOKEN_STEP
-    return FIRST_THRESHOLD + (t - 1) * TOKEN_STEP;
+    // Tier 0 is free. Tier 1..FIRST_CAPPED_TIER ramps by TOKEN_STEP. Tier > FIRST_CAPPED_TIER
+    // costs THRESHOLD_CAP each. So with defaults: 200, 300, 400, 500, 500, 500, ...
+    if (t <= 0) return 0;
+    return Math.min(FIRST_THRESHOLD + (t - 1) * TOKEN_STEP, THRESHOLD_CAP);
   }
 
   // ====== Theme helpers (sync Bootstrap color mode with OS preference) ======
@@ -294,14 +305,15 @@
 
   function drainTierFor(daily_drain) {
     const d = daily_drain || BASE_DRAIN;
-    return Math.max(0, Math.min(MAX_TIER, Math.round((d - BASE_DRAIN) / TIER_STEP)));
+    return Math.max(0, Math.round((d - BASE_DRAIN) / TIER_STEP));
   }
 
   function applyTierColor(state) {
     // Color follows max(balance-tier, drain-tier) so the accent never regresses once your
     // drain has ratcheted up, even if today's drain pulls your balance below the threshold.
+    // Beyond COLOR_CYCLE, the palette repeats (CSS defines colors for tiers 0..9).
     const colorTier = Math.max(tierFor(state.balance), drainTierFor(state.daily_drain));
-    document.documentElement.setAttribute("data-tier", String(colorTier));
+    document.documentElement.setAttribute("data-tier", String(colorTier % COLOR_CYCLE));
   }
 
   function renderTier(state) {
@@ -312,20 +324,10 @@
     const floor = autoMinDrain(bal);
 
     applyTierColor(state);
+    $tierCard.removeClass("tier-maxed");
 
     $drainFloorText.text(floor);
     $dailyDrainInput.attr("min", floor);
-
-    if (tier >= MAX_TIER) {
-      $tierLabel.text(`Tier ${MAX_TIER} / ${MAX_TIER} — MAX (drain ${MAX_DRAIN})`);
-      $nextUnlockText.text("Maxed out");
-      $tierProgressBar.css("width", "100%");
-      $tierHintText.text(`Top tier reached. Daily drain is locked at the maximum of ${MAX_DRAIN}.`);
-      $tierCard.addClass("tier-maxed");
-      return;
-    }
-
-    $tierCard.removeClass("tier-maxed");
 
     const nextTier = tier + 1;
     const nextDrain = BASE_DRAIN + nextTier * TIER_STEP;
@@ -333,7 +335,7 @@
     const pct = Math.max(0, Math.min(100, (bal / nextAt) * 100));
     const toGo = Math.max(0, nextAt - bal);
 
-    $tierLabel.text(`Tier ${tier} / ${MAX_TIER} — drain ${state.daily_drain}`);
+    $tierLabel.text(`Tier ${tier} — drain ${state.daily_drain}`);
     $nextUnlockText.text(`${nextAt} tokens → drain ${nextDrain} (${toGo} to go)`);
     $tierProgressBar.css("width", pct + "%");
     $tierHintText.text(`Reach ${nextAt} tokens to bump drain to ${nextDrain} — balance resets to 0.`);
@@ -717,19 +719,23 @@
   // 4. A small sync-status badge under the balance shows syncing / saved / error+retry.
 
   // Mirror server-side ratchet: returns next state, with `_tieredUp` set if a tier-up happened.
+  // Walks tier-by-tier so a big single increment can skip multiple tiers correctly under the
+  // capped per-tier cost (200, 300, 400, 500, 500, 500, …).
   function projectAdd(curState, amount) {
     const inc = Number(amount) || 1;
     let balance = curState.balance + inc;
-    let dailyDrain = curState.daily_drain || BASE_DRAIN;
-    let tieredUp = null;
-    const floor = autoMinDrain(balance);
-    if (floor > dailyDrain) {
-      const newDrainTier = Math.round((floor - BASE_DRAIN) / TIER_STEP);
-      const threshold = thresholdForTier(newDrainTier);
-      balance = Math.max(0, balance - threshold);
-      tieredUp = { oldDrain: dailyDrain, newDrain: floor };
-      dailyDrain = floor;
+    const startDrain = curState.daily_drain || BASE_DRAIN;
+    let curTier = drainTierFor(startDrain);
+    let bumped = false;
+    while (true) {
+      const cost = thresholdForTier(curTier + 1);
+      if (balance < cost) break;
+      balance -= cost;
+      curTier += 1;
+      bumped = true;
     }
+    const dailyDrain = BASE_DRAIN + curTier * TIER_STEP;
+    const tieredUp = bumped ? { oldDrain: startDrain, newDrain: dailyDrain } : null;
     return { ...curState, balance, daily_drain: dailyDrain, _tieredUp: tieredUp };
   }
 
@@ -794,33 +800,39 @@
   }
 
   // One-way ratchet: if the balance qualifies for a higher drain than currently set,
-  // raise the drain to the floor and notify. Never lowers automatically.
+  // raise the drain and notify. Never lowers automatically. Walks tier-by-tier so a big
+  // single increment can correctly skip multiple capped-cost tiers.
   async function maybeAutoBumpDrain(state) {
-    const floor = autoMinDrain(state.balance);
-    if (floor <= (state.daily_drain || 0)) return state;
+    const oldDrain = state.daily_drain || BASE_DRAIN;
+    let balance = state.balance;
+    let curTier = drainTierFor(oldDrain);
+    let bumped = false;
+    while (true) {
+      const cost = thresholdForTier(curTier + 1);
+      if (balance < cost) break;
+      balance -= cost;
+      curTier += 1;
+      bumped = true;
+    }
+    if (!bumped) return state;
+    const newDrain = BASE_DRAIN + curTier * TIER_STEP;
 
-    const oldDrain = state.daily_drain;
-    // Tier-up: deduct the threshold of the new tier from balance so any overflow
-    // carries through (e.g., reaching balance 250 with tier-1 threshold=200 leaves 50).
-    // Skipping multiple tiers in one increment is handled correctly because
-    // thresholdForTier(N) equals the cumulative cost from 0 to tier N.
-    const newDrainTier = Math.round((floor - BASE_DRAIN) / TIER_STEP);
-    const threshold = thresholdForTier(newDrainTier);
-    const newBalance = Math.max(0, state.balance - threshold);
-
-    const { data: updated, error } = await supabase
-      .from("fit_state")
-      .update({ daily_drain: floor, balance: newBalance })
-      .eq("id", "singleton")
-      .select("*")
-      .single();
+    const { data: updated, error } = await withTiming(
+      `autoBumpDrain(${oldDrain}→${newDrain})`,
+      () => supabase
+        .from("fit_state")
+        .update({ daily_drain: newDrain, balance: balance })
+        .eq("id", "singleton")
+        .select("*")
+        .single()
+    );
 
     if (error) {
       console.warn("Failed to auto-bump daily drain:", error);
       return state;
     }
 
-    flashTierCelebration(oldDrain, floor);
+    flashTierCelebration(oldDrain, newDrain);
     return updated;
   }
 
@@ -1622,11 +1634,6 @@
             showAlert(`Drain cannot go below the current tier floor of ${floor}. Snapped up.`, "warning");
             setTimeout(hideAlert, 3500);
             newDrain = floor;
-          }
-          if (newDrain > MAX_DRAIN) {
-            showAlert(`Drain capped at the maximum of ${MAX_DRAIN}.`, "warning");
-            setTimeout(hideAlert, 3500);
-            newDrain = MAX_DRAIN;
           }
           const updated = await updateDailyDrain(state, newDrain);
           state = updated;
