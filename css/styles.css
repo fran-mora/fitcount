@@ -25,6 +25,39 @@ body {
   letter-spacing: 0.5px;
 }
 
+/* Sync status badge sits under the balance number.
+   States: idle (hidden), syncing (subtle), saved (green flash), error (red, clickable). */
+.sync-status {
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+  min-height: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.sync-status[data-state="idle"]    { visibility: hidden; }
+.sync-status[data-state="syncing"] { color: #6c757d; }
+.sync-status[data-state="saved"]   { color: #198754; }
+.sync-status[data-state="error"]   {
+  color: #dc3545;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.sync-status .sync-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+.sync-status[data-state="syncing"] .sync-dot {
+  animation: sync-pulse 1s infinite ease-in-out;
+}
+@keyframes sync-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
 /* Better layout for the top card on mobile */
 @media (max-width: 576px) {
   .card-body.d-flex {

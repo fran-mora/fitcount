@@ -43,7 +43,67 @@
   const $tierHintText = $("#tierHintText");
   const $tierCard = $(".tier-card");
   const $drainFloorText = $("#drainFloorText");
+  const $syncStatus = $("#syncStatus");
   let repsChart = null;
+
+  // ====== Network instrumentation ======
+  // Wrap every Supabase call with: console timing, 15s timeout, error logging.
+  // Purpose: make slow/failing calls visible in DevTools and stop calls hanging forever.
+  const SUPABASE_TIMEOUT_MS = 15000;
+  function withTiming(label, run) {
+    const started = performance.now();
+    console.log(`[fitcount] ${label} → start`);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${SUPABASE_TIMEOUT_MS}ms`)), SUPABASE_TIMEOUT_MS)
+    );
+    return Promise.race([Promise.resolve().then(run), timeoutPromise]).then(
+      (result) => {
+        const ms = Math.round(performance.now() - started);
+        // PostgREST returns { data, error } even on bad SQL — surface that as an error too.
+        if (result && result.error) {
+          console.warn(`[fitcount] ${label} ✗ ${ms}ms`, result.error);
+        } else {
+          console.log(`[fitcount] ${label} ✓ ${ms}ms`);
+        }
+        return result;
+      },
+      (err) => {
+        const ms = Math.round(performance.now() - started);
+        console.warn(`[fitcount] ${label} ✗ ${ms}ms (threw)`, err);
+        throw err;
+      }
+    );
+  }
+
+  // ====== Sync status badge (under the balance) ======
+  let syncStatusTimer = null;
+  let lastSaveRetry = null; // () => Promise<void> — set on error so user can tap to retry
+  function setSyncStatus(state, text, onRetry) {
+    if (syncStatusTimer) { clearTimeout(syncStatusTimer); syncStatusTimer = null; }
+    if (!$syncStatus.length) return;
+    $syncStatus.attr("data-state", state);
+    if (state === "idle") {
+      $syncStatus.html("");
+      lastSaveRetry = null;
+      return;
+    }
+    const dot = state === "syncing" || state === "saved"
+      ? '<span class="sync-dot"></span>'
+      : "";
+    $syncStatus.html(`${dot}<span>${text}</span>`);
+    if (state === "saved") {
+      syncStatusTimer = setTimeout(() => setSyncStatus("idle"), 1500);
+      lastSaveRetry = null;
+    }
+    if (state === "error") {
+      lastSaveRetry = onRetry || null;
+    }
+  }
+  // Click the error badge to retry the last failed save.
+  $(document).on("click", "#syncStatus[data-state='error']", () => {
+    const retry = lastSaveRetry;
+    if (retry) retry();
+  });
 
   // ====== Tier ladder ======
   // Base drain 110 → at balance >= 200 unlock drain 120; every +100 tokens unlocks +10 drain,
@@ -354,23 +414,29 @@
     const today = todayYMD();
     const inc = Number(amount) || 1;
     // Read existing count
-    const { data: existing, error: selErr } = await supabase
-      .from("fit_reps")
-      .select("reps")
-      .eq("rep_date", today)
-      .maybeSingle();
+    const { data: existing, error: selErr } = await withTiming(`fit_reps.select(${today})`, () =>
+      supabase
+        .from("fit_reps")
+        .select("reps")
+        .eq("rep_date", today)
+        .maybeSingle()
+    );
     if (selErr) throw selErr;
 
     if (existing) {
-      const { error: updErr } = await supabase
-        .from("fit_reps")
-        .update({ reps: existing.reps + inc })
-        .eq("rep_date", today);
+      const { error: updErr } = await withTiming(`fit_reps.update(+${inc})`, () =>
+        supabase
+          .from("fit_reps")
+          .update({ reps: existing.reps + inc })
+          .eq("rep_date", today)
+      );
       if (updErr) throw updErr;
     } else {
-      const { error: insErr } = await supabase
-        .from("fit_reps")
-        .insert({ rep_date: today, reps: inc });
+      const { error: insErr } = await withTiming(`fit_reps.insert(+${inc})`, () =>
+        supabase
+          .from("fit_reps")
+          .insert({ rep_date: today, reps: inc })
+      );
       if (insErr) throw insErr;
     }
   }
@@ -458,9 +524,11 @@
       return;
     }
 
-    const { error } = await supabase
-      .from("fit_submissions")
-      .insert({ amount, submission_date: today });
+    const { error } = await withTiming(`flushSubmission(+${amount})`, () =>
+      supabase
+        .from("fit_submissions")
+        .insert({ amount, submission_date: today })
+    );
 
     if (error) {
       if (isTableMissingError(error)) {
@@ -569,12 +637,14 @@
     const inc = Number(amount) || 1;
     const newBal = state.balance + inc;
 
-    const { data: updated, error } = await supabase
-      .from("fit_state")
-      .update({ balance: newBal })
-      .eq("id", "singleton")
-      .select("*")
-      .single();
+    const { data: updated, error } = await withTiming(`incrementBy(${inc})`, () =>
+      supabase
+        .from("fit_state")
+        .update({ balance: newBal })
+        .eq("id", "singleton")
+        .select("*")
+        .single()
+    );
 
     if (error) {
       showAlert(`Error updating balance: ${error.message}`, "danger");
@@ -583,7 +653,7 @@
 
     // Record reps for today
     try {
-      await incrementTodaysReps(inc);
+      await withTiming(`incrementTodaysReps(${inc})`, () => incrementTodaysReps(inc));
     } catch (e) {
       console.warn("Failed to record reps:", e);
       showAlert("Saved balance, but failed to record today's reps history.", "warning");
@@ -592,13 +662,79 @@
     return updated;
   }
 
+  // ===== Optimistic balance writes =====
+  // The +1 / +5 / +10 buttons and workout-confirm use this fast path:
+  // 1. Compute the new balance + tier-up locally and refresh UI immediately.
+  // 2. In the background, write the new balance+drain to fit_state in ONE round-trip.
+  // 3. Reps history is recorded best-effort.
+  // 4. A small sync-status badge under the balance shows syncing / saved / error+retry.
+
+  // Mirror server-side ratchet: returns next state, with `_tieredUp` set if a tier-up happened.
+  function projectAdd(curState, amount) {
+    const inc = Number(amount) || 1;
+    let balance = curState.balance + inc;
+    let dailyDrain = curState.daily_drain || BASE_DRAIN;
+    let tieredUp = null;
+    const floor = autoMinDrain(balance);
+    if (floor > dailyDrain) {
+      const newDrainTier = Math.round((floor - BASE_DRAIN) / TIER_STEP);
+      const threshold = thresholdForTier(newDrainTier);
+      balance = Math.max(0, balance - threshold);
+      tieredUp = { oldDrain: dailyDrain, newDrain: floor };
+      dailyDrain = floor;
+    }
+    return { ...curState, balance, daily_drain: dailyDrain, _tieredUp: tieredUp };
+  }
+
+  // Save coalescing: while a save is running, additional requests collapse into a single
+  // follow-up save that reads the latest local state. So 10 rapid clicks → at most 2 writes.
+  let saveInFlight = false;
+  let saveQueuedAgain = false;
+  async function saveCurrentBalance() {
+    if (saveInFlight) { saveQueuedAgain = true; return; }
+    saveInFlight = true;
+    setSyncStatus("syncing", "saving…");
+    try {
+      do {
+        saveQueuedAgain = false;
+        const result = await withTiming(
+          `saveBalance(balance=${state.balance}, drain=${state.daily_drain})`,
+          () => supabase
+            .from("fit_state")
+            .update({ balance: state.balance, daily_drain: state.daily_drain })
+            .eq("id", "singleton")
+            .select("*")
+            .single()
+        );
+        if (result.error) throw result.error;
+      } while (saveQueuedAgain);
+      setSyncStatus("saved", "saved");
+    } catch (err) {
+      const msg = (err && (err.message || err.code)) || String(err);
+      setSyncStatus("error", `save failed (${msg}) — tap to retry`, saveCurrentBalance);
+    } finally {
+      saveInFlight = false;
+    }
+  }
+
+  // Best-effort reps-history write. Errors are logged but never shown — they don't affect balance.
+  async function writeRepsHistoryBestEffort(amount) {
+    try {
+      await withTiming(`writeRepsHistory(+${amount})`, () => incrementTodaysReps(amount));
+    } catch (e) {
+      console.warn("[fitcount] reps history write failed:", e);
+    }
+  }
+
   async function updateDailyDrain(state, newDrain) {
-    const { data: updated, error } = await supabase
-      .from("fit_state")
-      .update({ daily_drain: newDrain })
-      .eq("id", "singleton")
-      .select("*")
-      .single();
+    const { data: updated, error } = await withTiming(`updateDailyDrain(${newDrain})`, () =>
+      supabase
+        .from("fit_state")
+        .update({ daily_drain: newDrain })
+        .eq("id", "singleton")
+        .select("*")
+        .single()
+    );
 
     if (error) {
       showAlert(`Error updating daily drain: ${error.message}`, "danger");
@@ -857,26 +993,21 @@
       await refreshSubmissions();
       await setupPhotos();
 
-      // Wire up rep buttons
-      function setRepButtonsDisabled(disabled) {
-        $rep1Btn.prop("disabled", disabled);
-        $rep5Btn.prop("disabled", disabled);
-        $rep10Btn.prop("disabled", disabled);
-      }
-
-      const handleAdd = (amt) => async () => {
-        setRepButtonsDisabled(true);
-        try {
-          const updated = await incrementBy(state, amt);
-          state = updated;
-          // Ratchet check after every rep — this is where tier-ups happen
-          state = await maybeAutoBumpDrain(state);
-          refreshUI(state, { drainedNow: 0 });
-          await refreshRepsChart();
-          trackSubmission(amt);
-        } finally {
-          setRepButtonsDisabled(false);
-        }
+      // Wire up rep buttons.
+      // Optimistic flow: update local state + UI instantly; persist in background.
+      // The sync-status badge under the balance shows saving / saved / error+retry.
+      const handleAdd = (amt) => () => {
+        const projected = projectAdd(state, amt);
+        const tierFlash = projected._tieredUp;
+        delete projected._tieredUp;
+        state = projected;
+        refreshUI(state, { drainedNow: 0 });
+        if (tierFlash) flashTierCelebration(tierFlash.oldDrain, tierFlash.newDrain);
+        // Background work — none of this blocks the UI.
+        saveCurrentBalance();
+        writeRepsHistoryBestEffort(amt);
+        trackSubmission(amt);
+        refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
       };
 
       $rep1Btn.off("click").on("click", handleAdd(1));
@@ -1398,25 +1529,26 @@
         refreshRestSecsDisplay();
       });
       $workoutDiscardBtn.off("click").on("click", closeWorkout);
-      $workoutConfirmBtn.off("click").on("click", async () => {
+      $workoutConfirmBtn.off("click").on("click", () => {
         const pts = parseInt($workoutPointsInput.val(), 10);
         if (isNaN(pts) || pts < 0) {
           showAlert("Enter a valid number of points (0 or greater)", "warning");
           return;
         }
-        $workoutConfirmBtn.prop("disabled", true);
-        try {
-          if (pts > 0) {
-            state = await incrementBy(state, pts);
-            state = await maybeAutoBumpDrain(state);
-            refreshUI(state, { drainedNow: 0 });
-            await refreshRepsChart();
-            trackSubmission(pts);
-          }
-          closeWorkout();
-        } finally {
-          $workoutConfirmBtn.prop("disabled", false);
+        // Optimistic: close instantly, save in the background, surface state via the sync badge.
+        if (pts > 0) {
+          const projected = projectAdd(state, pts);
+          const tierFlash = projected._tieredUp;
+          delete projected._tieredUp;
+          state = projected;
+          refreshUI(state, { drainedNow: 0 });
+          if (tierFlash) flashTierCelebration(tierFlash.oldDrain, tierFlash.newDrain);
+          saveCurrentBalance();
+          writeRepsHistoryBestEffort(pts);
+          trackSubmission(pts);
+          refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
         }
+        closeWorkout();
       });
 
       // Wire up daily drain update button
