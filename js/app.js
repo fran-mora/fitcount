@@ -45,6 +45,9 @@
   const $drainFloorText = $("#drainFloorText");
   const $syncStatus = $("#syncStatus");
   let repsChart = null;
+  // Live local state — kept at module scope so background save helpers can read the
+  // latest optimistic value when coalesced saves run later.
+  let state = null;
 
   // ====== Network instrumentation ======
   // Wrap every Supabase call with: console timing, 15s timeout, error logging.
@@ -78,24 +81,24 @@
   // ====== Sync status badge (under the balance) ======
   let syncStatusTimer = null;
   let lastSaveRetry = null; // () => Promise<void> — set on error so user can tap to retry
-  function setSyncStatus(state, text, onRetry) {
+  function setSyncStatus(kind, text, onRetry) {
     if (syncStatusTimer) { clearTimeout(syncStatusTimer); syncStatusTimer = null; }
     if (!$syncStatus.length) return;
-    $syncStatus.attr("data-state", state);
-    if (state === "idle") {
+    $syncStatus.attr("data-state", kind);
+    if (kind === "idle") {
       $syncStatus.html("");
       lastSaveRetry = null;
       return;
     }
-    const dot = state === "syncing" || state === "saved"
+    const dot = kind === "syncing" || kind === "saved"
       ? '<span class="sync-dot"></span>'
       : "";
     $syncStatus.html(`${dot}<span>${text}</span>`);
-    if (state === "saved") {
+    if (kind === "saved") {
       syncStatusTimer = setTimeout(() => setSyncStatus("idle"), 1500);
       lastSaveRetry = null;
     }
-    if (state === "error") {
+    if (kind === "error") {
       lastSaveRetry = onRetry || null;
     }
   }
@@ -981,7 +984,7 @@
     hideAlert();
 
     try {
-      let state = await ensureStateRow();
+      state = await ensureStateRow();
       const { state: processedState, drainedNow } = await processDrainIfNeeded(state);
       state = processedState;
 
