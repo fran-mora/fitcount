@@ -51,7 +51,7 @@
 
   // ====== Build identifier (matches the ?v= in index.html) ======
   // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
-  const BUILD_VERSION = "20260618d";
+  const BUILD_VERSION = "20260625a";
 
   // ====== Debug log ring buffer ======
   // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
@@ -770,12 +770,41 @@
     }
   }
 
-  // Best-effort reps-history write. Errors are logged but never shown — they don't affect balance.
+  // Best-effort reps-history write.
+  // SERIALIZED via coalescing: incrementTodaysReps does a read-modify-write on fit_reps,
+  // so firing many in parallel causes lost updates (last writer wins, all others overwritten).
+  // While a write is in flight we accumulate further increments into `pendingRepsAmount`
+  // and flush them as a single second write when the first finishes. At most 2 writes per
+  // burst regardless of tap volume — no more dropped reps.
+  let repsWriteInFlight = false;
+  let pendingRepsAmount = 0;
   async function writeRepsHistoryBestEffort(amount) {
+    const inc = Number(amount) || 0;
+    if (inc <= 0) return;
+    if (repsWriteInFlight) {
+      pendingRepsAmount += inc;
+      pushDebug("info", `writeReps queued (+${inc}, pending=${pendingRepsAmount})`);
+      return;
+    }
+    repsWriteInFlight = true;
+    let toWrite = inc;
     try {
-      await withTiming(`writeRepsHistory(+${amount})`, () => incrementTodaysReps(amount));
-    } catch (e) {
-      console.warn("[fitcount] reps history write failed:", e);
+      while (toWrite > 0) {
+        const flushing = toWrite;
+        toWrite = 0;
+        try {
+          await withTiming(`writeRepsHistory(+${flushing})`, () => incrementTodaysReps(flushing));
+        } catch (e) {
+          console.warn("[fitcount] reps history write failed:", e);
+          pushDebug("err", `writeReps(+${flushing}) failed: ${e && e.message || e}`);
+        }
+        if (pendingRepsAmount > 0) {
+          toWrite = pendingRepsAmount;
+          pendingRepsAmount = 0;
+        }
+      }
+    } finally {
+      repsWriteInFlight = false;
     }
   }
 
