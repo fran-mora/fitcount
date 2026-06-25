@@ -51,7 +51,7 @@
 
   // ====== Build identifier (matches the ?v= in index.html) ======
   // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
-  const BUILD_VERSION = "20260625a";
+  const BUILD_VERSION = "20260625b";
 
   // ====== Debug log ring buffer ======
   // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
@@ -776,6 +776,8 @@
   // While a write is in flight we accumulate further increments into `pendingRepsAmount`
   // and flush them as a single second write when the first finishes. At most 2 writes per
   // burst regardless of tap volume — no more dropped reps.
+  // After the queue fully drains, we trigger ONE chart refresh so the "Today" badge in
+  // Last 5 Days always reflects the post-drain DB truth (not a mid-queue snapshot).
   let repsWriteInFlight = false;
   let pendingRepsAmount = 0;
   async function writeRepsHistoryBestEffort(amount) {
@@ -806,6 +808,8 @@
     } finally {
       repsWriteInFlight = false;
     }
+    // Single chart/Last-5-Days refresh after the whole burst settles.
+    refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
   }
 
   async function updateDailyDrain(state, newDrain) {
@@ -1099,9 +1103,10 @@
           if (tierFlash) flashTierCelebration(tierFlash.oldDrain, tierFlash.newDrain);
           // Background work — none of this blocks the UI.
           saveCurrentBalance();
+          // writeRepsHistoryBestEffort serializes writes AND triggers refreshRepsChart()
+          // itself once the queue drains, so don't refresh the chart here — it would race.
           writeRepsHistoryBestEffort(amt);
           trackSubmission(amt);
-          refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
         } catch (err) {
           pushDebug("err", `handleAdd(+${amt}) threw: ${err && err.message || err}`);
           setSyncStatus("error", `unexpected error: ${err && err.message || err}`, null);
@@ -1642,9 +1647,10 @@
           refreshUI(state, { drainedNow: 0 });
           if (tierFlash) flashTierCelebration(tierFlash.oldDrain, tierFlash.newDrain);
           saveCurrentBalance();
+          // writeRepsHistoryBestEffort serializes writes AND triggers refreshRepsChart()
+          // itself once the queue drains, so don't refresh the chart here — it would race.
           writeRepsHistoryBestEffort(pts);
           trackSubmission(pts);
-          refreshRepsChart().catch((e) => console.warn("[fitcount] chart refresh failed:", e));
         }
         closeWorkout();
       });
