@@ -51,7 +51,7 @@
 
   // ====== Build identifier (matches the ?v= in index.html) ======
   // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
-  const BUILD_VERSION = "20260625b";
+  const BUILD_VERSION = "20260625c";
 
   // ====== Debug log ring buffer ======
   // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
@@ -1042,6 +1042,315 @@
     }
   }
 
+  // ====== Body measurements ======
+  const MEASUREMENT_FIELDS = [
+    { key: "weight_kg",  label: "Weight",  unit: "kg" },
+    { key: "waist_cm",   label: "Waist",   unit: "cm" },
+    { key: "hip_cm",     label: "Hip",     unit: "cm" },
+    { key: "chest_cm",   label: "Chest",   unit: "cm" },
+    { key: "arm_cm",     label: "Arm",     unit: "cm" },
+    { key: "thigh_cm",   label: "Thigh",   unit: "cm" },
+    { key: "calf_cm",    label: "Calf",    unit: "cm" },
+    { key: "forearm_cm", label: "Forearm", unit: "cm" },
+    { key: "neck_cm",    label: "Neck",    unit: "cm" },
+    { key: "height_cm",  label: "Height",  unit: "cm" },
+  ];
+  // Form input id → DB column.
+  const MEASUREMENT_INPUTS = [
+    { id: "mWeight",  key: "weight_kg" },
+    { id: "mWaist",   key: "waist_cm" },
+    { id: "mHip",     key: "hip_cm" },
+    { id: "mChest",   key: "chest_cm" },
+    { id: "mArm",     key: "arm_cm" },
+    { id: "mThigh",   key: "thigh_cm" },
+    { id: "mCalf",    key: "calf_cm" },
+    { id: "mForearm", key: "forearm_cm" },
+    { id: "mNeck",    key: "neck_cm" },
+    { id: "mHeight",  key: "height_cm" },
+  ];
+  let measurementsChart = null;
+  let measurementsCache = [];      // most-recent first
+  let measurementsUnavailable = false;
+
+  async function loadMeasurements() {
+    if (measurementsUnavailable) return [];
+    const { data, error } = await withTiming("loadMeasurements", () =>
+      supabase
+        .from("fit_measurements")
+        .select("*")
+        .order("measured_at", { ascending: false })
+        .limit(500)
+    );
+    if (error) {
+      if (isTableMissingError(error)) {
+        measurementsUnavailable = true;
+        showAlert(
+          "Body Measurements storage unavailable: the fit_measurements table is missing in Supabase. " +
+          "Run the migration in supabase/migrations/20260625120000_add_fit_measurements.sql to enable it.",
+          "warning"
+        );
+        return [];
+      }
+      console.warn("[fitcount] loadMeasurements failed:", error);
+      return [];
+    }
+    return data || [];
+  }
+
+  async function saveMeasurement(values) {
+    if (measurementsUnavailable) {
+      showAlert("Body Measurements storage unavailable — run the migration first.", "warning");
+      return null;
+    }
+    const { data, error } = await withTiming("saveMeasurement", () =>
+      supabase.from("fit_measurements").insert(values).select("*").single()
+    );
+    if (error) {
+      if (isTableMissingError(error)) {
+        measurementsUnavailable = true;
+        showAlert("fit_measurements table is missing — run the migration first.", "warning");
+        return null;
+      }
+      showAlert(`Could not save measurement: ${error.message}`, "danger");
+      return null;
+    }
+    return data;
+  }
+
+  async function deleteMeasurement(id) {
+    if (measurementsUnavailable) return;
+    const { error } = await withTiming(`deleteMeasurement(${id})`, () =>
+      supabase.from("fit_measurements").delete().eq("id", id)
+    );
+    if (error) {
+      showAlert(`Could not delete measurement: ${error.message}`, "danger");
+    }
+  }
+
+  function fmtMeasurementDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  }
+  function fmtMeasurementValue(v) {
+    if (v == null || isNaN(v)) return "—";
+    const n = Number(v);
+    return n % 1 === 0 ? String(n) : n.toFixed(1);
+  }
+
+  function latestNonNullPerField(rows) {
+    // rows are newest-first; walk and pick the first non-null per field.
+    const latest = {};
+    for (const r of rows) {
+      for (const f of MEASUREMENT_FIELDS) {
+        if (latest[f.key] === undefined && r[f.key] != null) {
+          latest[f.key] = { value: r[f.key], measured_at: r.measured_at };
+        }
+      }
+    }
+    return latest;
+  }
+
+  function renderMeasurementsLatest(rows) {
+    const $el = $("#measurementsLatest");
+    $el.empty();
+    if (!rows.length) {
+      $el.html('<div class="text-muted small">No measurements yet — tap “+ Log” to add your first.</div>');
+      return;
+    }
+    const latest = latestNonNullPerField(rows);
+    const pills = MEASUREMENT_FIELDS
+      .filter((f) => latest[f.key] != null)
+      .map((f) => {
+        const v = fmtMeasurementValue(latest[f.key].value);
+        return `<span class="ms-pill"><span class="ms-pill-label">${f.label}</span>${v} ${f.unit}</span>`;
+      });
+    // Add derived: BMI + waist:hip.
+    if (latest.weight_kg && latest.height_cm) {
+      const h = latest.height_cm.value / 100;
+      const bmi = latest.weight_kg.value / (h * h);
+      pills.push(`<span class="ms-pill"><span class="ms-pill-label">BMI</span>${bmi.toFixed(1)}</span>`);
+    }
+    if (latest.waist_cm && latest.hip_cm) {
+      const ratio = latest.waist_cm.value / latest.hip_cm.value;
+      pills.push(`<span class="ms-pill"><span class="ms-pill-label">W/H</span>${ratio.toFixed(2)}</span>`);
+    }
+    $el.html(pills.join(""));
+  }
+
+  function renderMeasurementsRecent(rows) {
+    const $list = $("#measurementsRecentList");
+    $list.empty();
+    if (!rows.length) return;
+    const recent = rows.slice(0, 5);
+    recent.forEach((r) => {
+      const filled = MEASUREMENT_FIELDS
+        .filter((f) => r[f.key] != null)
+        .map((f) => `${f.label} ${fmtMeasurementValue(r[f.key])}${f.unit}`)
+        .join(" · ");
+      const notes = r.notes ? `<div class="text-muted small">${$("<div/>").text(r.notes).html()}</div>` : "";
+      const html = `
+        <li class="list-group-item bg-transparent ms-row">
+          <div>
+            <div class="ms-row-date">${fmtMeasurementDate(r.measured_at)}</div>
+            ${notes}
+          </div>
+          <div class="d-flex align-items-start gap-1">
+            <div class="ms-row-vals">${filled || '<span class="text-muted">empty</span>'}</div>
+            <button class="ms-row-delete" data-id="${r.id}" title="Delete">×</button>
+          </div>
+        </li>`;
+      $list.append(html);
+    });
+    $list.find(".ms-row-delete").off("click").on("click", async function () {
+      const id = $(this).data("id");
+      if (!confirm("Delete this measurement?")) return;
+      await deleteMeasurement(id);
+      await refreshMeasurements();
+    });
+  }
+
+  function buildMeasurementSeries(rows, metric) {
+    // rows newest-first. Series chronological.
+    const chronological = rows.slice().reverse();
+    if (metric === "bmi") {
+      // Need both weight and height. Carry-forward the last known height.
+      let lastHeight = null;
+      const points = [];
+      for (const r of chronological) {
+        if (r.height_cm != null) lastHeight = r.height_cm;
+        if (r.weight_kg != null && lastHeight) {
+          const h = lastHeight / 100;
+          points.push({ x: r.measured_at, y: r.weight_kg / (h * h) });
+        }
+      }
+      return points;
+    }
+    if (metric === "waist_hip_ratio") {
+      const points = [];
+      for (const r of chronological) {
+        if (r.waist_cm != null && r.hip_cm != null) {
+          points.push({ x: r.measured_at, y: r.waist_cm / r.hip_cm });
+        }
+      }
+      return points;
+    }
+    const points = [];
+    for (const r of chronological) {
+      if (r[metric] != null) {
+        points.push({ x: r.measured_at, y: Number(r[metric]) });
+      }
+    }
+    return points;
+  }
+
+  function renderMeasurementsChart(rows) {
+    const canvas = document.getElementById("measurementsChart");
+    if (!canvas) return;
+    const metric = $("#measurementsMetric").val() || "weight_kg";
+    const series = buildMeasurementSeries(rows, metric);
+    const labels = series.map((p) => fmtMeasurementDate(p.x));
+    const values = series.map((p) => p.y);
+
+    const { textColor, gridColor } = getChartColors();
+    const tierRgb = (getComputedStyle(document.documentElement)
+      .getPropertyValue("--tier-color-rgb").trim()) || "13,110,253";
+    const lineColor = `rgba(${tierRgb}, 0.9)`;
+    const fillColor = `rgba(${tierRgb}, 0.15)`;
+
+    if (measurementsChart) measurementsChart.destroy();
+    if (!series.length) {
+      // Empty chart placeholder.
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    measurementsChart = new window.Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: metric,
+          data: values,
+          borderColor: lineColor,
+          backgroundColor: fillColor,
+          fill: true,
+          tension: 0.25,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: textColor, autoSkip: true, maxRotation: 0 }, grid: { display: false } },
+          y: { ticks: { color: textColor, precision: 1 }, grid: { color: gridColor } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+  }
+
+  async function refreshMeasurements() {
+    const rows = await loadMeasurements();
+    measurementsCache = rows;
+    renderMeasurementsLatest(rows);
+    renderMeasurementsRecent(rows);
+    renderMeasurementsChart(rows);
+  }
+
+  function openMeasurementForm() {
+    MEASUREMENT_INPUTS.forEach((i) => $("#" + i.id).val(""));
+    $("#mNotes").val("");
+    $("#measurementsForm").show();
+    $("#measurementsToggleFormBtn").hide();
+    $("#mWeight").trigger("focus");
+  }
+  function closeMeasurementForm() {
+    $("#measurementsForm").hide();
+    $("#measurementsToggleFormBtn").show();
+  }
+
+  function setupMeasurements() {
+    $("#measurementsToggleFormBtn").off("click").on("click", openMeasurementForm);
+    $("#measurementsCancelBtn").off("click").on("click", closeMeasurementForm);
+    $("#measurementsMetric").off("change").on("change", () => renderMeasurementsChart(measurementsCache));
+    $("#measurementsSaveBtn").off("click").on("click", async () => {
+      const values = {};
+      let anyFilled = false;
+      MEASUREMENT_INPUTS.forEach((i) => {
+        const raw = $("#" + i.id).val();
+        if (raw !== "" && raw != null) {
+          const n = Number(raw);
+          if (!isNaN(n) && n > 0) {
+            values[i.key] = n;
+            anyFilled = true;
+          }
+        }
+      });
+      const notes = ($("#mNotes").val() || "").trim();
+      if (notes) { values.notes = notes; anyFilled = true; }
+      if (!anyFilled) {
+        showAlert("Enter at least one measurement before saving.", "warning");
+        setTimeout(hideAlert, 3000);
+        return;
+      }
+      $("#measurementsSaveBtn").prop("disabled", true).text("Saving…");
+      try {
+        const saved = await saveMeasurement(values);
+        if (saved) {
+          closeMeasurementForm();
+          await refreshMeasurements();
+          showAlert("Measurement saved.", "success");
+          setTimeout(hideAlert, 2000);
+        }
+      } finally {
+        $("#measurementsSaveBtn").prop("disabled", false).text("Save");
+      }
+    });
+    refreshMeasurements();
+  }
+
   async function setupPhotos() {
     $("#photoFileInput").off("change").on("change", async (e) => {
       const file = e.target.files && e.target.files[0];
@@ -1083,6 +1392,7 @@
       refreshUI(state, { drainedNow });
       await refreshRepsChart();
       await refreshSubmissions();
+      setupMeasurements();
       await setupPhotos();
 
       // Wire up rep buttons.

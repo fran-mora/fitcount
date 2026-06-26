@@ -227,6 +227,70 @@
       </div>
     </div>
 
+    <!-- Body Measurements -->
+    <div class="row g-3 mt-1">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <div class="text-muted small">Body Measurements</div>
+              <button id="measurementsToggleFormBtn" class="btn btn-sm btn-outline-primary" type="button">+ Log</button>
+            </div>
+
+            <!-- Add form (collapsed by default) -->
+            <div id="measurementsForm" class="measurements-form" style="display:none;">
+              <div class="row g-2">
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Weight (kg)</label><input type="number" step="0.1" inputmode="decimal" id="mWeight" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Waist (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mWaist" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Hip (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mHip" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Chest (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mChest" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Arm flexed (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mArm" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Thigh (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mThigh" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Calf (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mCalf" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Forearm (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mForearm" class="form-control form-control-sm" /></div>
+                <div class="col-6 col-md-4"><label class="form-label small mb-0">Neck (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mNeck" class="form-control form-control-sm" /></div>
+                <div class="col-12 col-md-4"><label class="form-label small mb-0">Height (cm)</label><input type="number" step="0.1" inputmode="decimal" id="mHeight" class="form-control form-control-sm" /></div>
+                <div class="col-12"><label class="form-label small mb-0">Notes</label><input type="text" id="mNotes" class="form-control form-control-sm" maxlength="200" /></div>
+              </div>
+              <div class="text-muted small mt-2">Leave blank what you didn't measure today. Dominant side only.</div>
+              <div class="d-flex gap-2 mt-2">
+                <button id="measurementsSaveBtn" class="btn btn-sm btn-primary" type="button">Save</button>
+                <button id="measurementsCancelBtn" class="btn btn-sm btn-outline-secondary" type="button">Cancel</button>
+              </div>
+            </div>
+
+            <!-- Latest summary -->
+            <div id="measurementsLatest" class="measurements-latest small mt-2"></div>
+
+            <!-- Trend chart with metric selector -->
+            <div class="d-flex align-items-center gap-2 mt-3">
+              <label for="measurementsMetric" class="text-muted small mb-0">Trend:</label>
+              <select id="measurementsMetric" class="form-select form-select-sm" style="max-width: 180px;">
+                <option value="weight_kg">Weight (kg)</option>
+                <option value="waist_cm">Waist (cm)</option>
+                <option value="hip_cm">Hip (cm)</option>
+                <option value="chest_cm">Chest (cm)</option>
+                <option value="arm_cm">Arm (cm)</option>
+                <option value="thigh_cm">Thigh (cm)</option>
+                <option value="calf_cm">Calf (cm)</option>
+                <option value="forearm_cm">Forearm (cm)</option>
+                <option value="neck_cm">Neck (cm)</option>
+                <option value="waist_hip_ratio">Waist / Hip ratio</option>
+                <option value="bmi">BMI</option>
+              </select>
+            </div>
+            <div class="chart-fixed-height mt-2">
+              <canvas id="measurementsChart"></canvas>
+            </div>
+
+            <!-- Recent history -->
+            <div class="text-muted small mt-3 mb-1">Recent</div>
+            <ul id="measurementsRecentList" class="list-group list-group-flush small"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Progress Photos -->
     <div class="row g-3 mt-1">
       <div class="col-12">
@@ -339,7 +403,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
   <!-- App script -->
-  <script defer src="js/app.js?v=20260625b"></script>
+  <script defer src="js/app.js?v=20260625c"></script>
 
   <!-- Bootstrap JS (optional) -->
   <script
