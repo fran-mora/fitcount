@@ -51,7 +51,7 @@
 
   // ====== Build identifier (matches the ?v= in index.html) ======
   // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
-  const BUILD_VERSION = "20260625c";
+  const BUILD_VERSION = "20260629a";
 
   // ====== Debug log ring buffer ======
   // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
@@ -498,8 +498,16 @@
 
   function isTableMissingError(err) {
     if (!err) return false;
-    const msg = (err.message || err.code || "").toLowerCase();
-    return msg.includes("pgrst205") || msg.includes("not found") || msg.includes("does not exist") || msg.includes("relation") || msg.includes("42p01");
+    const msg = String(err.message || "").toLowerCase();
+    const code = String(err.code || "").toLowerCase();
+    if (code === "pgrst205" || code === "42p01") return true;
+    return (
+      msg.includes("pgrst205") ||
+      msg.includes("schema cache") ||
+      msg.includes("could not find the table") ||
+      msg.includes("does not exist") ||
+      msg.includes("not found")
+    );
   }
 
   function showSubmissionsUnavailableAlert() {
@@ -1336,16 +1344,21 @@
         return;
       }
       $("#measurementsSaveBtn").prop("disabled", true).text("Saving…");
+      let saved = null;
       try {
-        const saved = await saveMeasurement(values);
-        if (saved) {
-          closeMeasurementForm();
-          await refreshMeasurements();
-          showAlert("Measurement saved.", "success");
-          setTimeout(hideAlert, 2000);
-        }
+        saved = await saveMeasurement(values);
+      } catch (e) {
+        console.warn("[fitcount] saveMeasurement threw:", e);
+        pushDebug("err", `saveMeasurement threw: ${e && e.message || e}`);
+        showAlert(`Could not save measurement: ${e && e.message || e}`, "danger");
       } finally {
         $("#measurementsSaveBtn").prop("disabled", false).text("Save");
+      }
+      if (saved) {
+        closeMeasurementForm();
+        await refreshMeasurements();
+        showAlert("Measurement saved.", "success");
+        setTimeout(hideAlert, 2000);
       }
     });
     refreshMeasurements();
