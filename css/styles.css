@@ -140,6 +140,10 @@ html[data-tier="9"]         { --tier-color: #6610f2; --tier-color-rgb: 102,16,24
 #tierProgressBar {
   background-color: var(--tier-color) !important;
 }
+/* Negative-balance mode: red bar fills toward the tier-down threshold. */
+#tierProgressBar.tier-progress-negative {
+  background-color: #dc3545 !important;
+}
 .tier-card.tier-maxed {
   border-color: var(--tier-color);
   box-shadow: 0 0 0 1px rgba(var(--tier-color-rgb), 0.35), 0 .125rem .25rem rgba(0,0,0,.075);

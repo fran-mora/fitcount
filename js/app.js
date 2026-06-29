@@ -51,7 +51,7 @@
 
   // ====== Build identifier (matches the ?v= in index.html) ======
   // Bump this whenever you ship a JS change so you can confirm the device picked up the new code.
-  const BUILD_VERSION = "20260629a";
+  const BUILD_VERSION = "20260629b";
 
   // ====== Debug log ring buffer ======
   // Mirrors every console.log/console.warn that starts with "[fitcount]" into an in-memory
@@ -162,6 +162,10 @@
   const TOKEN_STEP = 100;          // tokens needed per tier in the ramp phase
   const FIRST_THRESHOLD = 200;     // balance needed to unlock tier 1
   const THRESHOLD_CAP = 500;       // per-tier cost caps here and stays flat
+  // Tier-DOWN: when balance falls to -DEMOTE_THRESHOLD, drain drops by TIER_STEP and
+  // balance resets to 0 (mirrors the cap-side of the up-ratchet). Flat across tiers,
+  // so the bar tells the same story whether you're climbing or sliding.
+  const DEMOTE_THRESHOLD = THRESHOLD_CAP;
   // The first tier whose cost equals the cap (with FIRST_THRESHOLD=200, TOKEN_STEP=100,
   // THRESHOLD_CAP=500 → tier 4).
   const FIRST_CAPPED_TIER = Math.floor((THRESHOLD_CAP - FIRST_THRESHOLD) / TOKEN_STEP) + 1;
@@ -328,21 +332,44 @@
 
     $drainFloorText.text(floor);
     $dailyDrainInput.attr("min", floor);
-
-    const nextTier = tier + 1;
-    const nextDrain = BASE_DRAIN + nextTier * TIER_STEP;
-    const nextAt = thresholdForTier(nextTier); // absolute balance needed (grind from 0)
-    const pct = Math.max(0, Math.min(100, (bal / nextAt) * 100));
-    const toGo = Math.max(0, nextAt - bal);
-
     $tierLabel.text(`Tier ${tier} — drain ${state.daily_drain}`);
-    $nextUnlockText.text(`${nextAt} tokens → drain ${nextDrain} (${toGo} to go)`);
-    $tierProgressBar.css("width", pct + "%");
-    $tierHintText.text(`Reach ${nextAt} tokens to bump drain to ${nextDrain} — balance resets to 0.`);
+
+    if (bal >= 0) {
+      // Climbing: bar fills toward the next tier-up threshold in the tier color.
+      const nextTier = tier + 1;
+      const nextDrain = BASE_DRAIN + nextTier * TIER_STEP;
+      const nextAt = thresholdForTier(nextTier);
+      const pct = Math.max(0, Math.min(100, (bal / nextAt) * 100));
+      const toGo = Math.max(0, nextAt - bal);
+      $nextUnlockText.text(`${nextAt} tokens → drain ${nextDrain} (${toGo} to go)`);
+      $tierProgressBar.css("width", pct + "%").removeClass("tier-progress-negative");
+      $tierHintText.text(`Reach ${nextAt} tokens to bump drain to ${nextDrain} — balance resets to 0.`);
+    } else if (tier > 0) {
+      // Sliding: bar fills RED toward the demote threshold (-DEMOTE_THRESHOLD).
+      const prevTier = tier - 1;
+      const prevDrain = BASE_DRAIN + prevTier * TIER_STEP;
+      const pct = Math.max(0, Math.min(100, (-bal / DEMOTE_THRESHOLD) * 100));
+      const toDemote = Math.max(0, DEMOTE_THRESHOLD + bal); // bal is negative here
+      $nextUnlockText.text(`-${DEMOTE_THRESHOLD} tokens → drain ${prevDrain} (${toDemote} to demote)`);
+      $tierProgressBar.css("width", pct + "%").addClass("tier-progress-negative");
+      $tierHintText.text(`Drop to -${DEMOTE_THRESHOLD} tokens and drain falls to ${prevDrain} — balance resets to 0.`);
+    } else {
+      // At tier 0 with a negative balance — no further demotion possible.
+      $nextUnlockText.text("Grind tokens back into positive to start climbing.");
+      $tierProgressBar.css("width", "100%").addClass("tier-progress-negative");
+      $tierHintText.text("You're at the base tier. No more demotions — just dig out.");
+    }
   }
 
   function flashTierCelebration(oldDrain, newDrain) {
     showAlert(`🎉 Tier up! Drain ${oldDrain} → ${newDrain}. Threshold deducted — grind on.`, "success");
+    setTimeout(hideAlert, 4000);
+    $tierCard.addClass("tier-bump-flash");
+    setTimeout(() => $tierCard.removeClass("tier-bump-flash"), 1300);
+  }
+
+  function flashTierDemotion(oldDrain, newDrain) {
+    showAlert(`Tier down — drain ${oldDrain} → ${newDrain}. Balance reset to 0 — get moving.`, "warning");
     setTimeout(hideAlert, 4000);
     $tierCard.addClass("tier-bump-flash");
     setTimeout(() => $tierCard.removeClass("tier-bump-flash"), 1300);
@@ -490,8 +517,11 @@
     }
   }
 
-  // ====== Submissions (5-second aggregation with local fallback) ======
-  const AGGREGATION_WINDOW_MS = 5000;
+  // ====== Submissions (short aggregation window with local fallback) ======
+  // 1500ms window: long enough to merge a rapid burst of taps into ONE breakdown row,
+  // short enough that backgrounding the app rarely drops the pending write. The
+  // visibilitychange / pagehide flush below catches the rest with a keepalive fetch.
+  const AGGREGATION_WINDOW_MS = 1500;
   let pendingSubmission = null; // { amount, timer }
   let submissionsUseLocal = false; // true when fit_submissions table is unavailable
   let localSubmissions = []; // in-memory fallback for current day
@@ -615,6 +645,43 @@
       flushSubmission(total);
     }, AGGREGATION_WINDOW_MS);
   }
+
+  // When the tab is hidden or unloaded BEFORE the aggregation timer fires we'd lose
+  // the pending submission. This dispatches a keepalive POST that the browser holds
+  // open across unload, so the row still lands in Supabase. See visibilitychange
+  // and pagehide listeners below.
+  function flushPendingSubmissionNow() {
+    if (!pendingSubmission) return;
+    clearTimeout(pendingSubmission.timer);
+    const total = pendingSubmission.amount;
+    pendingSubmission = null;
+    const today = todayYMD();
+    if (submissionsUseLocal) {
+      localSubmissions.unshift({ submitted_at: new Date().toISOString(), amount: total, submission_date: today });
+      return;
+    }
+    try {
+      fetch(SUPABASE_URL + "/rest/v1/fit_submissions", {
+        method: "POST",
+        headers: {
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal",
+        },
+        body: JSON.stringify({ amount: total, submission_date: today }),
+        keepalive: true,
+      });
+      pushDebug("info", `flushPendingSubmission(+${total}) sent via keepalive`);
+    } catch (e) {
+      console.warn("[fitcount] keepalive flush failed:", e);
+      pushDebug("err", `keepalive flush failed: ${e && e.message || e}`);
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPendingSubmissionNow();
+  });
+  window.addEventListener("pagehide", flushPendingSubmissionNow);
 
   // ====== Data layer ======
   async function ensureStateRow() {
@@ -840,26 +907,31 @@
     return updated;
   }
 
-  // One-way ratchet: if the balance qualifies for a higher drain than currently set,
-  // raise the drain and notify. Never lowers automatically. Walks tier-by-tier so a big
-  // single increment can correctly skip multiple capped-cost tiers.
+  // Two-way ratchet: walk up while balance ≥ next tier-up cost, then walk down while
+  // balance ≤ -DEMOTE_THRESHOLD and we're above tier 0. Floor is BASE_DRAIN (tier 0).
   async function maybeAutoBumpDrain(state) {
     const oldDrain = state.daily_drain || BASE_DRAIN;
     let balance = state.balance;
     let curTier = drainTierFor(oldDrain);
-    let bumped = false;
+    let promoted = 0;
+    let demoted = 0;
     while (true) {
       const cost = thresholdForTier(curTier + 1);
       if (balance < cost) break;
       balance -= cost;
       curTier += 1;
-      bumped = true;
+      promoted += 1;
     }
-    if (!bumped) return state;
+    while (curTier > 0 && balance <= -DEMOTE_THRESHOLD) {
+      balance += DEMOTE_THRESHOLD;
+      curTier -= 1;
+      demoted += 1;
+    }
+    if (!promoted && !demoted) return state;
     const newDrain = BASE_DRAIN + curTier * TIER_STEP;
 
     const { data: updated, error } = await withTiming(
-      `autoBumpDrain(${oldDrain}→${newDrain})`,
+      `autoAdjustDrain(${oldDrain}→${newDrain})`,
       () => supabase
         .from("fit_state")
         .update({ daily_drain: newDrain, balance: balance })
@@ -869,11 +941,12 @@
     );
 
     if (error) {
-      console.warn("Failed to auto-bump daily drain:", error);
+      console.warn("Failed to auto-adjust daily drain:", error);
       return state;
     }
 
-    flashTierCelebration(oldDrain, newDrain);
+    if (promoted) flashTierCelebration(oldDrain, newDrain);
+    else if (demoted) flashTierDemotion(oldDrain, newDrain);
     return updated;
   }
 
